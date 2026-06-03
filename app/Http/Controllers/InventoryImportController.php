@@ -130,7 +130,7 @@ class InventoryImportController extends Controller
         ]);
     }
 
-    public function downloadImageLog(InventoryImport $import): BinaryFileResponse
+    public function downloadImageLog(InventoryImport $import): StreamedResponse|BinaryFileResponse
     {
         $logger = new InventoryImageDownloadLogger($import->id);
 

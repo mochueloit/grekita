@@ -14,4 +14,25 @@ return [
     'image_download_pause_seconds' => (int) env('INVENTORY_IMAGE_DOWNLOAD_PAUSE', 1),
 
     'image_download_timeout' => (int) env('INVENTORY_IMAGE_DOWNLOAD_TIMEOUT', 20),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Worker del scheduler (producción)
+    |--------------------------------------------------------------------------
+    | Colas: default (importación) + images (descarga lenta de imágenes).
+    | El cron debe ejecutar: php artisan schedule:run
+    */
+    'worker_queues' => array_values(array_filter(array_map(
+        trim(...),
+        explode(',', env('INVENTORY_WORKER_QUEUES', 'default,images'))
+    ))),
+
+    'worker_max_time' => (int) env('INVENTORY_WORKER_MAX_TIME', 55),
+
+    'worker_sleep' => (int) env('INVENTORY_WORKER_SLEEP', 1),
+
+    'worker_tries' => (int) env('INVENTORY_WORKER_TRIES', 3),
+
+    /** Timeout del proceso queue:work (segundos). Debe ser >= timeout del job más largo. */
+    'worker_timeout' => (int) env('INVENTORY_WORKER_TIMEOUT', 120),
 ];
