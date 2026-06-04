@@ -15,22 +15,16 @@ class InventoryCsvImporter
 
     private ?InventoryHeaderResolver $headerResolver = null;
 
+    private ?InventoryProductRowParser $rowParser = null;
+
     /** @var array<string, true> */
     private array $countedUpdatedSkus = [];
 
     public function __construct(
         private readonly InventoryFileReader $fileReader,
         private readonly LocationResolver $locationResolver,
-        private readonly InventoryAssociationParser $associationParser,
-        private readonly ProductAttributeParser $attributeParser,
-        private readonly ProductDescriptionCleaner $descriptionCleaner,
-        private readonly ProductDescriptionFormatter $descriptionFormatter,
-        private readonly BrandExtractor $brandExtractor,
-        private readonly ProductImageParser $imageParser,
         private readonly ProductAttributeSyncService $attributeSync,
         private readonly ProductImageDownloader $imageDownloader,
-        private readonly ProductPriceParser $priceParser,
-        private readonly ProductCategoryParser $categoryParser,
         private readonly ProductCategorySyncService $categorySync,
     ) {}
 
@@ -39,28 +33,42 @@ class InventoryCsvImporter
         $filePath = Storage::disk($import->disk)->path($import->stored_path);
         $progress = new InventoryImportProgress($import->id);
 
-        $progress->log('Contando filas del archivo…');
-        $totalRows = $this->fileReader->countDataRows($filePath);
-
         $header = $this->readHeader($filePath);
         $headerMap = $this->buildHeaderMap($header);
+        $resolver = InventoryHeaderResolver::fromHeaderMap($headerMap);
+        $this->logDetectedColumns($progress, $resolver);
+
+        $progress->log('Analizando filas por sede (una lectura del archivo)…');
+        $rowCounts = $this->analyzeFileRows($filePath, $headerMap);
+        $totalRows = $rowCounts['total'];
 
         $import->update([
             'total_rows' => $totalRows,
             'processed_rows' => 0,
             'header_map' => $headerMap,
             'checkpoint' => [
+                'phase' => InventoryImportPhase::CATALOG,
                 'counted_updated_skus' => [],
+                'catalog_rows' => $rowCounts['catalog'],
+                'stock_rows' => $rowCounts['stock'],
             ],
             'partial_stats' => $this->emptyStats(),
-            'current_step' => 'En cola para procesamiento',
+            'current_step' => InventoryImportPhase::label(InventoryImportPhase::CATALOG),
         ]);
 
-        $progress->log("Listo: {$totalRows} filas. Se procesarán en lotes de ".config('inventory.rows_per_job', 25).'.');
+        $progress->log(sprintf(
+            'Plan de importación: %d filas totales · %d Puerto Ordaz (catálogo + imágenes) · %d otras sedes (solo stock, 2.ª lectura).',
+            $totalRows,
+            $rowCounts['catalog'],
+            $rowCounts['stock'],
+        ));
+        $progress->log('Fase 1: se filtra el archivo por cuenta Puerto Ordaz y se registran productos.');
+        $progress->log('Fase 2: se vuelve a leer el archivo completo y solo se importa stock de Lechería y Caracas.');
+        $progress->log('Lotes de '.config('inventory.rows_per_job', 25).' filas leídas por pasada.');
     }
 
     /**
-     * @return array{has_more: bool, next_skip: int, rows_scanned: int}
+     * @return array{has_more: bool, next_skip: int, rows_scanned: int, phase_complete: ?string}
      */
     public function processQueuedChunk(InventoryImport $import, int $skipRows): array
     {
@@ -69,27 +77,37 @@ class InventoryCsvImporter
         $limit = config('inventory.rows_per_job', 25);
 
         $this->headerMap = $import->header_map ?? [];
-        $this->bootHeaderResolver();
-        $checkpoint = $import->checkpoint ?? ['counted_updated_skus' => []];
+        $this->bootParsers();
+
+        $checkpoint = $import->checkpoint ?? [];
+        $phase = $checkpoint['phase'] ?? InventoryImportPhase::CATALOG;
         $this->countedUpdatedSkus = $checkpoint['counted_updated_skus'] ?? [];
 
         $stats = array_merge($this->emptyStats(), $import->partial_stats ?? []);
         $chunk = [];
         $rowsInBatch = 0;
+        $rowsMatchedPhase = 0;
         $skippedLogger = new InventorySkippedRowLogger($import->id);
 
         foreach ($this->fileReader->dataRows($filePath, $skipRows, $limit) as $row) {
             $rowsInBatch++;
             $dataRowNumber = $skipRows + $rowsInBatch;
-            $parsed = $this->tryParseRow($row, $dataRowNumber, $skippedLogger);
+            $parsed = $this->tryParseRow($row, $dataRowNumber, $skippedLogger, $phase);
 
             if ($parsed === null) {
-                $stats['skipped']++;
+                if ($this->lastParseWasHardSkip()) {
+                    $stats['skipped']++;
+                }
 
                 continue;
             }
 
+            if (! InventoryImportPhase::acceptsRow($parsed, $phase)) {
+                continue;
+            }
+
             $chunk[] = $parsed;
+            $rowsMatchedPhase++;
             $stats['processed']++;
         }
 
@@ -97,12 +115,14 @@ class InventoryCsvImporter
         $totalRows = $import->total_rows ?? $rowsScanned;
 
         if ($chunk !== []) {
-            $chunkStats = $this->processChunk($chunk, $progress, $rowsScanned, $totalRows, $stats, $skippedLogger, $import->id);
-            foreach (['created', 'updated', 'attributes_synced', 'images_queued', 'images_failed', 'skipped'] as $key) {
-                $stats[$key] += $chunkStats[$key];
-            }
-            if ($chunkStats['skipped'] > 0) {
-                $stats['processed'] = max(0, $stats['processed'] - $chunkStats['skipped']);
+            $chunkStats = $phase === InventoryImportPhase::CATALOG
+                ? $this->processCatalogChunk($chunk, $progress, $rowsScanned, $totalRows, $stats, $import->id)
+                : $this->processStockChunk($chunk, $skippedLogger);
+
+            foreach (['created', 'updated', 'attributes_synced', 'images_queued', 'images_failed', 'skipped', 'stock_applied', 'stock_skipped'] as $key) {
+                if (array_key_exists($key, $chunkStats)) {
+                    $stats[$key] += $chunkStats[$key];
+                }
             }
         }
 
@@ -111,35 +131,68 @@ class InventoryCsvImporter
         $import->update([
             'processed_rows' => $rowsScanned,
             'partial_stats' => $stats,
-            'checkpoint' => [
+            'checkpoint' => array_merge($checkpoint, [
                 'counted_updated_skus' => $this->countedUpdatedSkus,
-            ],
-            'current_step' => $hasMore ? 'Lote hasta fila '.$rowsScanned : 'Finalizando',
+            ]),
+            'current_step' => $hasMore
+                ? InventoryImportPhase::label($phase).' — hasta fila '.$rowsScanned
+                : ($phase === InventoryImportPhase::CATALOG
+                    ? 'Finalizando fase 1'
+                    : 'Finalizando fase 2'),
         ]);
 
-        $percent = ($import->total_rows ?? 0) > 0
-            ? min(100, (int) round(($rowsScanned / $import->total_rows) * 100))
-            : 0;
+        $percent = ($totalRows > 0) ? min(100, (int) round(($rowsScanned / $totalRows) * 100)) : 0;
 
-        $progress->log(sprintf(
-            'Lote completado — %d/%d filas (%d%%) · %d creados · %d actualizados · %d imágenes en cola',
-            $rowsScanned,
-            $import->total_rows ?? $rowsScanned,
-            $percent,
-            $stats['created'],
-            $stats['updated'],
-            $stats['images_queued'],
-        ));
+        $this->logChunkProgress($progress, $phase, $rowsScanned, $totalRows, $percent, $rowsMatchedPhase, $stats);
+
+        $phaseComplete = null;
+
+        if (! $hasMore && $phase === InventoryImportPhase::CATALOG) {
+            $phaseComplete = InventoryImportPhase::CATALOG;
+        }
 
         return [
             'has_more' => $hasMore,
             'next_skip' => $rowsScanned,
             'rows_scanned' => $rowsScanned,
+            'phase_complete' => $phaseComplete,
         ];
     }
 
+    public function beginStockPhase(InventoryImport $import): void
+    {
+        $checkpoint = $import->checkpoint ?? [];
+        $stats = array_merge($this->emptyStats(), $import->partial_stats ?? []);
+
+        $import->update([
+            'processed_rows' => 0,
+            'checkpoint' => array_merge($checkpoint, [
+                'phase' => InventoryImportPhase::STOCK,
+                'counted_updated_skus' => [],
+            ]),
+            'partial_stats' => $stats,
+            'current_step' => InventoryImportPhase::label(InventoryImportPhase::STOCK),
+        ]);
+
+        $progress = new InventoryImportProgress($import->id);
+        $catalogRows = $checkpoint['catalog_rows'] ?? '?';
+        $stockRows = $checkpoint['stock_rows'] ?? '?';
+
+        $progress->log(sprintf(
+            'Fase 1 terminada: %d productos creados, %d actualizados, %d imágenes en cola.',
+            $stats['created'] ?? 0,
+            $stats['updated'] ?? 0,
+            $stats['images_queued'] ?? 0,
+        ));
+        $progress->log(sprintf(
+            'Iniciando fase 2 — segunda lectura del archivo (%s filas de otras sedes, solo stock).',
+            (string) $stockRows,
+        ));
+        $progress->log('Se omiten filas de Puerto Ordaz; el producto debe existir desde la fase 1.');
+    }
+
     /**
-     * @return array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int}
+     * @return array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int, stock_applied: int, stock_skipped: int}
      */
     private function emptyStats(): array
     {
@@ -151,7 +204,39 @@ class InventoryCsvImporter
             'attributes_synced' => 0,
             'images_queued' => 0,
             'images_failed' => 0,
+            'stock_applied' => 0,
+            'stock_skipped' => 0,
         ];
+    }
+
+    /**
+     * @return array{total: int, catalog: int, stock: int}
+     */
+    private function analyzeFileRows(string $filePath, array $headerMap): array
+    {
+        $this->headerMap = $headerMap;
+        $this->bootParsers();
+
+        $total = 0;
+        $catalog = 0;
+        $stock = 0;
+
+        foreach ($this->fileReader->dataRows($filePath) as $row) {
+            $total++;
+            $parsed = $this->rowParser?->parse($row);
+
+            if ($parsed === null) {
+                continue;
+            }
+
+            if ($parsed['is_primary_catalog']) {
+                $catalog++;
+            } else {
+                $stock++;
+            }
+        }
+
+        return ['total' => $total, 'catalog' => $catalog, 'stock' => $stock];
     }
 
     /**
@@ -171,25 +256,52 @@ class InventoryCsvImporter
     }
 
     /**
-     * @return array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int}
+     * @return array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int, stock_applied: int, stock_skipped: int}
      */
     public function import(string $filePath, ?InventoryImport $import = null): array
     {
         $progress = $import !== null ? new InventoryImportProgress($import->id) : null;
 
         if ($progress !== null) {
-            $progress->log('Contando filas del archivo…');
-            $totalRows = $this->fileReader->countDataRows($filePath);
-            $progress->sync([
-                'total_rows' => $totalRows,
-                'processed_rows' => 0,
-                'current_step' => 'Preparando importación',
-            ]);
-            $progress->log("Archivo listo: {$totalRows} filas de datos detectadas.");
-        } else {
-            $totalRows = null;
+            $progress->log('Importación en dos fases (catálogo PO → stock otras sedes)…');
         }
 
+        $stats = $this->emptyStats();
+
+        foreach ([InventoryImportPhase::CATALOG, InventoryImportPhase::STOCK] as $phase) {
+            if ($progress !== null) {
+                $progress->log(InventoryImportPhase::label($phase));
+            }
+
+            $phaseStats = $this->importPhaseFromFile($filePath, $phase, $progress, $import);
+
+            foreach ($phaseStats as $key => $value) {
+                $stats[$key] += $value;
+            }
+        }
+
+        if ($progress !== null) {
+            $progress->log(sprintf(
+                'Importación terminada: %d filas válidas, %d omitidas, %d stock aplicado, %d imágenes en cola.',
+                $stats['processed'],
+                $stats['skipped'],
+                $stats['stock_applied'],
+                $stats['images_queued'],
+            ));
+        }
+
+        return $stats;
+    }
+
+    /**
+     * @return array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int, stock_applied: int, stock_skipped: int}
+     */
+    private function importPhaseFromFile(
+        string $filePath,
+        string $phase,
+        ?InventoryImportProgress $progress,
+        ?InventoryImport $import,
+    ): array {
         $rowIterator = $this->fileReader->rows($filePath);
         $header = null;
 
@@ -204,29 +316,28 @@ class InventoryCsvImporter
         }
 
         $this->headerMap = $this->buildHeaderMap($header);
-        $this->bootHeaderResolver();
+        $this->bootParsers();
         $this->countedUpdatedSkus = [];
 
         $stats = $this->emptyStats();
-
         $chunk = [];
         $rowsScanned = 0;
         $chunkNumber = 0;
-
-        if ($progress !== null) {
-            $progress->sync(['current_step' => 'Procesando filas']);
-            $progress->log('Iniciando procesamiento por lotes…');
-        }
-
         $skippedLogger = $import !== null ? new InventorySkippedRowLogger($import->id) : null;
 
         foreach ($rowIterator as $row) {
             $rowsScanned++;
-            $parsed = $this->tryParseRow($row, $rowsScanned, $skippedLogger);
+            $parsed = $this->tryParseRow($row, $rowsScanned, $skippedLogger, $phase);
 
             if ($parsed === null) {
-                $stats['skipped']++;
+                if ($this->lastParseWasHardSkip()) {
+                    $stats['skipped']++;
+                }
 
+                continue;
+            }
+
+            if (! InventoryImportPhase::acceptsRow($parsed, $phase)) {
                 continue;
             }
 
@@ -235,187 +346,88 @@ class InventoryCsvImporter
 
             if (count($chunk) >= self::CHUNK_SIZE) {
                 $chunkNumber++;
-                $chunkStats = $this->processChunk($chunk, $progress, $rowsScanned, $totalRows, $stats, $skippedLogger, $import->id);
-                foreach (['created', 'updated', 'attributes_synced', 'images_queued', 'images_failed', 'skipped'] as $key) {
-                    $stats[$key] += $chunkStats[$key];
-                }
-                if ($chunkStats['skipped'] > 0) {
-                    $stats['processed'] = max(0, $stats['processed'] - $chunkStats['skipped']);
-                }
-                $this->reportProgress($progress, $rowsScanned, $totalRows, $stats, $chunkNumber);
+                $this->mergeChunkStats($stats, $phase, $chunk, $progress, $rowsScanned, $skippedLogger, $import?->id);
                 $chunk = [];
             }
         }
 
         if ($chunk !== []) {
-            $chunkNumber++;
-            $chunkStats = $this->processChunk($chunk, $progress, $rowsScanned, $totalRows, $stats, $skippedLogger, $import->id);
-            foreach (['created', 'updated', 'attributes_synced', 'images_queued', 'images_failed', 'skipped'] as $key) {
-                $stats[$key] += $chunkStats[$key];
-            }
-            if ($chunkStats['skipped'] > 0) {
-                $stats['processed'] = max(0, $stats['processed'] - $chunkStats['skipped']);
-            }
-            $this->reportProgress($progress, $rowsScanned, $totalRows, $stats, $chunkNumber);
-        }
-
-        if ($progress !== null) {
-            $progress->sync([
-                'processed_rows' => $rowsScanned,
-                'partial_stats' => $stats,
-                'current_step' => 'Finalizando',
-            ]);
-            $progress->log(sprintf(
-                'Importación terminada: %d filas válidas, %d omitidas, %d imágenes descargadas.',
-                $stats['processed'],
-                $stats['skipped'],
-                $stats['images_queued'],
-            ));
+            $this->mergeChunkStats($stats, $phase, $chunk, $progress, $rowsScanned, $skippedLogger, $import?->id);
         }
 
         return $stats;
     }
 
     /**
-     * @param  array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int}  $stats
+     * @param  array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int, stock_applied: int, stock_skipped: int}  $stats
+     * @param  array<int, array<string, mixed>>  $chunk
      */
-    private function reportProgress(
+    private function mergeChunkStats(
+        array &$stats,
+        string $phase,
+        array $chunk,
         ?InventoryImportProgress $progress,
         int $rowsScanned,
-        ?int $totalRows,
-        array $stats,
-        int $chunkNumber,
+        ?InventorySkippedRowLogger $skipped,
+        ?int $importId,
     ): void {
-        if ($progress === null) {
-            return;
-        }
+        $chunkStats = $phase === InventoryImportPhase::CATALOG
+            ? $this->processCatalogChunk($chunk, $progress, $rowsScanned, null, $stats, $importId)
+            : $this->processStockChunk($chunk, $skipped);
 
-        $progress->sync([
-            'processed_rows' => $rowsScanned,
-            'partial_stats' => $stats,
-            'current_step' => 'Procesando filas',
-        ]);
-
-        $totalLabel = $totalRows !== null ? (string) $totalRows : '?';
-        $percent = ($totalRows !== null && $totalRows > 0)
-            ? min(100, (int) round(($rowsScanned / $totalRows) * 100))
-            : null;
-
-        $percentLabel = $percent !== null ? " ({$percent}%)" : '';
-
-        $progress->log(sprintf(
-            'Lote #%d — %d/%s filas%s · %d creados · %d actualizados · %d imágenes en cola · %d omitidas',
-            $chunkNumber,
-            $rowsScanned,
-            $totalLabel,
-            $percentLabel,
-            $stats['created'],
-            $stats['updated'],
-            $stats['images_queued'],
-            $stats['skipped'],
-        ));
-    }
-
-    /**
-     * @param  array<int, string|null>  $header
-     */
-    private function isEmptyHeader(array $header): bool
-    {
-        foreach ($header as $column) {
-            if (trim((string) ($column ?? '')) !== '') {
-                return false;
+        foreach (['created', 'updated', 'attributes_synced', 'images_queued', 'images_failed', 'skipped', 'stock_applied', 'stock_skipped'] as $key) {
+            if (array_key_exists($key, $chunkStats)) {
+                $stats[$key] += $chunkStats[$key];
             }
         }
-
-        return true;
     }
 
-    /**
-     * @param  array<int, string|null>  $header
-     * @return array<string, int>
-     */
-    private function buildHeaderMap(array $header): array
-    {
-        $map = [];
-
-        foreach ($header as $index => $column) {
-            if ($column !== null && $column !== '') {
-                $map[trim($column)] = $index;
-            }
-        }
-
-        return $map;
-    }
+    private bool $lastParseWasHardSkip = false;
 
     /**
      * @param  array<int, string|null>  $row
      * @return array<string, mixed>|null
      */
-    private function tryParseRow(array $row, int $dataRowNumber, ?InventorySkippedRowLogger $skipped = null): ?array
-    {
-        $sku = trim($this->headerValue($row, 'sku') ?? '');
-        $title = trim($this->headerValue($row, 'titulo') ?? '');
-        $cuentaMl = trim($this->headerValue($row, 'cuenta_ml') ?? '');
+    private function tryParseRow(
+        array $row,
+        int $dataRowNumber,
+        ?InventorySkippedRowLogger $skipped,
+        string $phase,
+    ): ?array {
+        $this->lastParseWasHardSkip = false;
+
+        $sku = trim($this->headerResolver?->value($row, 'sku') ?? '');
+        $title = trim($this->headerResolver?->value($row, 'titulo') ?? '');
+        $cuentaMl = trim($this->headerResolver?->value($row, 'cuenta_ml') ?? '');
 
         if ($sku === '') {
+            $this->lastParseWasHardSkip = true;
             $this->recordSkip($skipped, $dataRowNumber, null, $title ?: null, $cuentaMl ?: null, 'empty_sku', 'SKU vacío: la fila no tiene identificador de producto.');
 
             return null;
         }
 
         if ($cuentaMl === '') {
-            $this->recordSkip($skipped, $dataRowNumber, $sku, $title ?: null, null, 'empty_cuenta_ml', 'Cuenta ML vacía: no se puede asignar stock a ninguna sede.');
+            $this->lastParseWasHardSkip = true;
+            $this->recordSkip($skipped, $dataRowNumber, $sku, $title ?: null, null, 'empty_cuenta_ml', 'Cuenta ML vacía: no se puede asignar a ninguna sede.');
 
             return null;
         }
 
-        $description = trim($this->headerValue($row, 'descripcion') ?? '');
-        $associations = trim($this->headerValue($row, 'asociaciones') ?? '');
-        $quantity = (int) ($this->headerValue($row, 'cantidad') ?? 0);
-        $rawAttributes = $this->headerValue($row, 'atributos') ?? '';
-        $attributes = $this->attributeParser->parse($rawAttributes);
-        $cleanDescription = $this->descriptionCleaner->clean($description);
-        $location = $this->locationResolver->resolveFromCuentaMl($cuentaMl);
-        $isPrimaryCatalog = $location->slug === LocationResolver::PRIMARY_LOCATION_SLUG;
-        $categoryRaw = $this->headerValue($row, 'categoria');
+        $parsed = $this->rowParser?->parse($row);
 
-        $foreignRaw = null;
-        $price = null;
-        $priceForeign = null;
-        $priceCurrency = null;
-
-        if ($isPrimaryCatalog) {
-            $foreignRaw = $this->headerValue($row, 'precio_divisas');
-            $priceForeign = $this->priceParser->parse($foreignRaw);
-            $price = $this->priceParser->parse($this->headerValue($row, 'precio'));
-            $priceCurrency = $this->priceParser->parseCurrency($this->headerValue($row, 'divisa'));
-
-            if ($priceCurrency === null && $priceForeign === null) {
-                $priceCurrency = $this->inferCurrencyCode($foreignRaw);
-            }
+        if ($parsed === null) {
+            return null;
         }
 
-        return [
-            'sku' => $sku,
-            'name' => $title !== '' ? $title : $sku,
-            'brand' => $this->brandExtractor->extract($attributes, $rawAttributes),
-            'price' => $price,
-            'price_foreign' => $priceForeign,
-            'price_currency' => $priceCurrency,
-            'warranty' => trim($this->headerValue($row, 'garantia') ?? '') ?: null,
-            'category_paths' => $this->categoryParser->parse($categoryRaw),
-            'category_raw' => $categoryRaw,
-            'short_description' => $this->descriptionCleaner->toShort($cleanDescription),
-            'long_description' => $cleanDescription,
-            'long_description_html' => $this->descriptionFormatter->toHtml($cleanDescription),
-            'attributes' => $attributes,
-            'image_urls' => $this->imageParser->parse($this->headerValue($row, 'imagenes') ?? ''),
-            'cuenta_ml' => $cuentaMl,
-            'location_slug' => $location->slug,
-            'is_primary_catalog' => $isPrimaryCatalog,
-            'stock' => $this->associationParser->parseStock($associations, $quantity),
-            '_data_row' => $dataRowNumber,
-        ];
+        if ($phase === InventoryImportPhase::STOCK && $parsed['is_primary_catalog']) {
+            return null;
+        }
+
+        $parsed['_data_row'] = $dataRowNumber;
+        $parsed['_title'] = $title;
+
+        return $parsed;
     }
 
     private function recordSkip(
@@ -443,16 +455,15 @@ class InventoryCsvImporter
 
     /**
      * @param  array<int, array<string, mixed>>  $chunk
-     * @param  array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int}  $baseStats
+     * @param  array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int, stock_applied: int, stock_skipped: int}  $baseStats
      * @return array{created: int, updated: int, attributes_synced: int, images_queued: int, images_failed: int, skipped: int}
      */
-    private function processChunk(
+    private function processCatalogChunk(
         array $chunk,
         ?InventoryImportProgress $progress,
         int $rowsScanned,
         ?int $totalRows,
         array $baseStats,
-        ?InventorySkippedRowLogger $skipped = null,
         ?int $importId = null,
     ): array {
         $created = 0;
@@ -460,95 +471,72 @@ class InventoryCsvImporter
         $attributesSynced = 0;
         $imagesQueued = 0;
         $imagesFailed = 0;
-        $skippedInChunk = 0;
 
-        $grouped = $this->groupBySkuAndLocation($chunk);
+        $grouped = $this->groupCatalogBySku($chunk);
 
         foreach ($grouped as $group) {
+            $metadata = ProductCatalogPayload::metadata(
+                array_merge($group['catalog'], ['sku' => $group['sku']]),
+            );
+
             $product = Product::query()->where('sku', $group['sku'])->first();
-            $metadataForCreate = $group['primary_metadata'] ?? $group['fallback_metadata'];
             $catalogStats = ['attributes' => 0, 'images_queued' => 0, 'images_failed' => 0];
 
             if ($product === null) {
-                if ($metadataForCreate === null) {
-                    $skippedInChunk++;
-                    $this->recordSkip(
-                        $skipped,
-                        (int) ($group['first_row'] ?? 0),
-                        $group['sku'],
-                        $group['title'] ?? null,
-                        $group['cuenta_ml'] ?? null,
-                        'no_catalog_source',
-                        'El SKU no existe y esta fila no aporta ficha de catálogo (solo Puerto Ordaz puede crear productos nuevos).',
-                    );
-
-                    continue;
-                }
-
                 $product = Product::query()->create([
                     'sku' => $group['sku'],
-                    ...$metadataForCreate['product'],
+                    ...$metadata['product'],
                 ]);
                 $created++;
 
                 if ($progress !== null) {
-                    $progress->sync(['current_step' => 'Encolando imágenes SKU '.$group['sku']]);
+                    $progress->sync(['current_step' => 'Fase 1 — encolando imágenes '.$group['sku']]);
                 }
 
-                $catalogStats = $this->syncCatalog($product, $metadataForCreate, $importId);
-                $attributesSynced += $catalogStats['attributes'];
-                $imagesQueued += $catalogStats['images_queued'];
-                $imagesFailed += $catalogStats['images_failed'];
-            } elseif ($group['primary_metadata'] !== null) {
-                $product->update($group['primary_metadata']['product']);
+                $catalogStats = $this->syncCatalog($product, $metadata, $importId);
+            } else {
+                if ($metadata['product'] !== []) {
+                    $product->update($metadata['product']);
 
-                if (! isset($this->countedUpdatedSkus[$group['sku']])) {
-                    $updated++;
-                    $this->countedUpdatedSkus[$group['sku']] = true;
+                    if (! isset($this->countedUpdatedSkus[$group['sku']])) {
+                        $updated++;
+                        $this->countedUpdatedSkus[$group['sku']] = true;
+                    }
                 }
 
                 if ($progress !== null) {
-                    $progress->sync(['current_step' => 'Encolando imágenes SKU '.$group['sku']]);
+                    $progress->sync(['current_step' => 'Fase 1 — SKU '.$group['sku']]);
                 }
 
-                $catalogStats = $this->syncCatalog($product, $group['primary_metadata'], $importId);
-                $attributesSynced += $catalogStats['attributes'];
-                $imagesQueued += $catalogStats['images_queued'];
-                $imagesFailed += $catalogStats['images_failed'];
+                $catalogStats = $this->syncCatalog($product, $metadata, $importId);
             }
 
-            if ($product === null) {
-                continue;
-            }
+            $attributesSynced += $catalogStats['attributes'];
+            $imagesQueued += $catalogStats['images_queued'];
+            $imagesFailed += $catalogStats['images_failed'];
 
-            foreach ($group['locations'] as $locationData) {
-                $location = $this->locationResolver->resolveFromCuentaMl($locationData['cuenta_ml']);
-                $this->applyStock($product, $location->id, $locationData['stock']);
-            }
+            $location = $this->locationResolver->resolveFromCuentaMl($group['catalog']['cuenta_ml']);
+            $this->applyStock($product, $location->id, (int) $group['catalog']['stock']);
 
             if ($progress !== null) {
-                $partial = [
-                    'processed' => $baseStats['processed'],
-                    'created' => $baseStats['created'] + $created,
-                    'updated' => $baseStats['updated'] + $updated,
-                    'skipped' => $baseStats['skipped'],
-                    'attributes_synced' => $baseStats['attributes_synced'] + $attributesSynced,
-                    'images_queued' => $baseStats['images_queued'] + $imagesQueued,
-                    'images_failed' => $baseStats['images_failed'] + $imagesFailed,
-                ];
-
                 $progress->sync([
                     'processed_rows' => $rowsScanned,
-                    'partial_stats' => $partial,
-                    'current_step' => 'SKU '.$group['sku'],
+                    'partial_stats' => [
+                        'processed' => $baseStats['processed'],
+                        'created' => $baseStats['created'] + $created,
+                        'updated' => $baseStats['updated'] + $updated,
+                        'skipped' => $baseStats['skipped'],
+                        'attributes_synced' => $baseStats['attributes_synced'] + $attributesSynced,
+                        'images_queued' => $baseStats['images_queued'] + $imagesQueued,
+                        'images_failed' => $baseStats['images_failed'] + $imagesFailed,
+                        'stock_applied' => $baseStats['stock_applied'],
+                        'stock_skipped' => $baseStats['stock_skipped'],
+                    ],
+                    'current_step' => 'Fase 1 — '.$group['sku'],
                 ]);
 
                 if ($catalogStats['images_queued'] > 0) {
-                    $progress->log(sprintf(
-                        'SKU %s — %d imágenes en cola de descarga',
-                        $group['sku'],
-                        $catalogStats['images_queued'],
-                    ));
+                    $progress->log(sprintf('SKU %s — %d imagen(es) en cola', $group['sku'], $catalogStats['images_queued']));
                 }
             }
         }
@@ -559,12 +547,75 @@ class InventoryCsvImporter
             'attributes_synced' => $attributesSynced,
             'images_queued' => $imagesQueued,
             'images_failed' => $imagesFailed,
-            'skipped' => $skippedInChunk,
+            'skipped' => 0,
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $chunk
+     * @return array{stock_applied: int, stock_skipped: int, skipped: int}
+     */
+    private function processStockChunk(array $chunk, ?InventorySkippedRowLogger $skipped): array
+    {
+        $stockApplied = 0;
+        $stockSkipped = 0;
+        $skippedCount = 0;
+
+        $grouped = [];
+
+        foreach ($chunk as $row) {
+            $key = $row['sku'].'|'.$row['cuenta_ml'];
+
+            if (! isset($grouped[$key])) {
+                $grouped[$key] = [
+                    'sku' => $row['sku'],
+                    'cuenta_ml' => $row['cuenta_ml'],
+                    'stock' => 0,
+                    'data_row' => $row['_data_row'] ?? 0,
+                    'title' => $row['_title'] ?? null,
+                ];
+            }
+
+            $grouped[$key]['stock'] += (int) $row['stock'];
+        }
+
+        foreach ($grouped as $group) {
+            $product = Product::query()->where('sku', $group['sku'])->first();
+
+            if ($product === null) {
+                $stockSkipped++;
+                $skippedCount++;
+                $this->recordSkip(
+                    $skipped,
+                    (int) $group['data_row'],
+                    $group['sku'],
+                    $group['title'],
+                    $group['cuenta_ml'],
+                    'product_not_found',
+                    'Fase 2: el producto no existe (falta fila de Puerto Ordaz en fase 1).',
+                );
+
+                continue;
+            }
+
+            $location = $this->locationResolver->resolveFromCuentaMl($group['cuenta_ml']);
+            $this->applyStock($product, $location->id, $group['stock']);
+            $stockApplied++;
+        }
+
+        return [
+            'stock_applied' => $stockApplied,
+            'stock_skipped' => $stockSkipped,
+            'skipped' => $skippedCount,
         ];
     }
 
     private function applyStock(Product $product, int $locationId, int $addedStock): void
     {
+        if ($addedStock <= 0) {
+            return;
+        }
+
         $existing = $product->locations()->where('locations.id', $locationId)->first();
         $current = $existing !== null ? (int) $existing->pivot->stock : 0;
 
@@ -601,122 +652,137 @@ class InventoryCsvImporter
 
     /**
      * @param  array<int, array<string, mixed>>  $chunk
-     * @return array<string, array<string, mixed>>
+     * @return array<string, array{sku: string, catalog: array<string, mixed>}>
      */
-    private function groupBySkuAndLocation(array $chunk): array
+    private function groupCatalogBySku(array $chunk): array
     {
         $grouped = [];
 
         foreach ($chunk as $row) {
             $sku = $row['sku'];
-            $locationKey = $row['cuenta_ml'];
-            $metadata = $this->extractMetadata($row);
 
-            if (! isset($grouped[$sku])) {
+            if (! isset($grouped[$sku]) || (int) ($row['stock'] ?? 0) > (int) ($grouped[$sku]['catalog']['stock'] ?? 0)) {
                 $grouped[$sku] = [
                     'sku' => $sku,
-                    'primary_metadata' => null,
-                    'fallback_metadata' => null,
-                    'locations' => [],
-                    'first_row' => $row['_data_row'] ?? 0,
-                    'title' => $row['name'] ?? null,
-                    'cuenta_ml' => $row['cuenta_ml'] ?? null,
+                    'catalog' => $row,
                 ];
             }
-
-            if ($row['is_primary_catalog']) {
-                $grouped[$sku]['primary_metadata'] = $metadata;
-            } elseif ($grouped[$sku]['fallback_metadata'] === null) {
-                $grouped[$sku]['fallback_metadata'] = $metadata;
-            }
-
-            if (! isset($grouped[$sku]['locations'][$locationKey])) {
-                $grouped[$sku]['locations'][$locationKey] = [
-                    'cuenta_ml' => $locationKey,
-                    'stock' => 0,
-                ];
-            }
-
-            $grouped[$sku]['locations'][$locationKey]['stock'] += $row['stock'];
-        }
-
-        foreach ($grouped as &$group) {
-            $group['locations'] = array_values($group['locations']);
         }
 
         return $grouped;
     }
 
     /**
-     * @param  array<string, mixed>  $row
-     * @return array{product: array<string, mixed>, attributes: array<string, string>, image_urls: list<string>, category_paths: list<string>, category_raw: ?string}
+     * @param  array{processed: int, created: int, updated: int, skipped: int, attributes_synced: int, images_queued: int, images_failed: int, stock_applied: int, stock_skipped: int}  $stats
      */
-    private function extractMetadata(array $row): array
-    {
-        return [
-            'product' => [
-                'name' => $row['name'],
-                'brand' => $row['brand'],
-                'price' => $row['price'],
-                'price_foreign' => $row['price_foreign'],
-                'price_currency' => $row['price_currency'],
-                'warranty' => $row['warranty'],
-                'short_description' => $row['short_description'],
-                'long_description' => $row['long_description'],
-                'long_description_html' => $row['long_description_html'],
-            ],
-            'attributes' => $row['attributes'],
-            'image_urls' => $row['image_urls'],
-            'category_paths' => $row['category_paths'] ?? [],
-            'category_raw' => $row['category_raw'] ?? null,
-        ];
+    private function logChunkProgress(
+        InventoryImportProgress $progress,
+        string $phase,
+        int $rowsScanned,
+        int $totalRows,
+        int $percent,
+        int $rowsMatchedPhase,
+        array $stats,
+    ): void {
+        if ($phase === InventoryImportPhase::CATALOG) {
+            $progress->log(sprintf(
+                'Fase 1 — %d/%d filas leídas (%d%%) · %d filas PO en este lote · %d creados · %d actualizados · %d imágenes en cola',
+                $rowsScanned,
+                $totalRows,
+                $percent,
+                $rowsMatchedPhase,
+                $stats['created'],
+                $stats['updated'],
+                $stats['images_queued'],
+            ));
+
+            return;
+        }
+
+        $progress->log(sprintf(
+            'Fase 2 — %d/%d filas leídas (%d%%) · %d filas otras sedes en lote · %d stock aplicado · %d sin producto',
+            $rowsScanned,
+            $totalRows,
+            $percent,
+            $rowsMatchedPhase,
+            $stats['stock_applied'],
+            $stats['stock_skipped'],
+        ));
     }
 
-    private function bootHeaderResolver(): void
+    private function bootParsers(): void
     {
         $this->headerResolver = $this->headerMap !== []
             ? InventoryHeaderResolver::fromHeaderMap($this->headerMap)
             : null;
+
+        if ($this->headerResolver === null) {
+            $this->rowParser = null;
+
+            return;
+        }
+
+        $this->rowParser = new InventoryProductRowParser(
+            $this->headerResolver,
+            $this->locationResolver,
+            new InventoryAssociationParser,
+            new ProductAttributeParser,
+            new ProductDescriptionCleaner,
+            new ProductDescriptionFormatter,
+            new BrandExtractor,
+            new ProductImageParser,
+            new ProductPriceParser,
+            new ProductCategoryParser,
+        );
     }
 
     /**
-     * @param  array<int, string|null>  $row
+     * @param  array<int, string|null>  $header
      */
-    private function headerValue(array $row, string $canonicalKey): ?string
+    private function isEmptyHeader(array $header): bool
     {
-        if ($this->headerResolver !== null) {
-            return $this->headerResolver->value($row, $canonicalKey);
+        foreach ($header as $column) {
+            if (trim((string) ($column ?? '')) !== '') {
+                return false;
+            }
         }
 
-        return null;
+        return true;
     }
 
     /**
-     * @param  array<int, string|null>  $row
+     * @param  array<int, string|null>  $header
+     * @return array<string, int>
      */
-    private function value(array $row, string $column): ?string
+    private function buildHeaderMap(array $header): array
     {
-        if (! isset($this->headerMap[$column])) {
-            return null;
+        $map = [];
+
+        foreach ($header as $index => $column) {
+            if ($column !== null && trim((string) $column) !== '') {
+                $map[trim((string) $column)] = (int) $index;
+            }
         }
 
-        $index = $this->headerMap[$column];
-
-        return isset($row[$index]) ? trim((string) $row[$index]) : null;
+        return $map;
     }
 
-    private function inferCurrencyCode(?string $value): ?string
+    private function logDetectedColumns(InventoryImportProgress $progress, InventoryHeaderResolver $resolver): void
     {
-        if ($value === null) {
-            return null;
+        $checks = [
+            'precio' => 'Precio',
+            'precio_divisas' => 'Precio en divisas',
+            'divisa' => 'Divisa/Moneda',
+            'garantia' => 'Garantía',
+            'categoria' => 'Categoría',
+        ];
+
+        foreach ($checks as $key => $label) {
+            if ($resolver->has($key)) {
+                $progress->log("Columna detectada: {$label}");
+            } else {
+                $progress->log("AVISO: no se detectó columna «{$label}» en el archivo.");
+            }
         }
-
-        $trimmed = trim($value);
-
-        if (preg_match('/^[A-Za-z]{3}$/', $trimmed) === 1) {
-            return strtoupper($trimmed);
-        }
-
-        return null;
     }
 }

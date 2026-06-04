@@ -41,7 +41,7 @@ class ProcessInventoryImportJob implements ShouldQueue
 
         try {
             $importer->prepareQueuedImport($import);
-            $progress->log('Archivo validado. Encolando lotes de procesamiento…');
+            $progress->log('Archivo validado. Encolando fase 1 (catálogo Puerto Ordaz)…');
             ProcessInventoryImportChunkJob::dispatch($this->importId, 0)->afterCommit();
         } catch (InvalidArgumentException $exception) {
             $this->markFailed($import, $exception->getMessage());

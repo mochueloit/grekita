@@ -120,6 +120,22 @@ class InventoryImport extends Model
         return (int) (($this->stats ?? $this->partial_stats)['skipped'] ?? 0);
     }
 
+    public function importPhase(): ?string
+    {
+        $phase = ($this->checkpoint ?? [])['phase'] ?? null;
+
+        return is_string($phase) ? $phase : null;
+    }
+
+    public function importPhaseLabel(): ?string
+    {
+        $phase = $this->importPhase();
+
+        return $phase !== null
+            ? \App\Services\Inventory\InventoryImportPhase::label($phase)
+            : null;
+    }
+
     public function workerHint(): ?string
     {
         if ($this->isFinished()) {

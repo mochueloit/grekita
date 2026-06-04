@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\InventoryImport;
 use App\Services\Inventory\InventoryCsvImporter;
 use App\Services\Inventory\InventoryImageDownloadLogger;
+use App\Services\Inventory\InventoryImportPhase;
 use App\Services\Inventory\InventoryImportProgress;
 use App\Services\Inventory\InventorySkippedRowExporter;
 use App\Services\Inventory\InventorySkippedRowLogger;
@@ -44,6 +45,13 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
         try {
             $result = $importer->processQueuedChunk($import, $this->skipRows);
 
+            if ($result['phase_complete'] === InventoryImportPhase::CATALOG) {
+                $importer->beginStockPhase($import->fresh() ?? $import);
+                ProcessInventoryImportChunkJob::dispatch($this->importId, 0)->afterCommit();
+
+                return;
+            }
+
             if ($result['has_more']) {
                 ProcessInventoryImportChunkJob::dispatch($this->importId, $result['next_skip'])->afterCommit();
 
@@ -56,7 +64,7 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
                 'status' => InventoryImport::STATUS_COMPLETED,
                 'stats' => $import->partial_stats,
                 'processed_rows' => $import->total_rows ?? $import->processed_rows,
-                'current_step' => 'Completado',
+                'current_step' => 'Completado (2 fases)',
                 'completed_at' => now(),
             ]);
 
@@ -67,7 +75,7 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
             $skippedLogger->persistCsv(app(InventorySkippedRowExporter::class));
 
             $imageLogger = new InventoryImageDownloadLogger($import->id);
-            $imageLogger->log('Importación de productos finalizada.');
+            $imageLogger->log('Importación de productos finalizada (catálogo + stock).');
             if (($stats['images_queued'] ?? 0) > 0) {
                 $imageLogger->log(sprintf(
                     'Descarga de imágenes en segundo plano: %d encolada(s) para esta importación.',
@@ -76,8 +84,11 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
             }
 
             $progress->log(sprintf(
-                'Importación terminada: %d filas válidas, %d omitidas, %d imágenes en cola de descarga.',
-                $stats['processed'] ?? 0,
+                'Importación terminada — Fase 1: %d creados, %d actualizados · Fase 2: %d stock aplicado, %d sin producto · %d omitidas · %d imágenes en cola.',
+                $stats['created'] ?? 0,
+                $stats['updated'] ?? 0,
+                $stats['stock_applied'] ?? 0,
+                $stats['stock_skipped'] ?? 0,
                 $stats['skipped'] ?? $skipped,
                 $stats['images_queued'] ?? 0,
             ));

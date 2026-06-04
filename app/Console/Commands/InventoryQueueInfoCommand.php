@@ -25,7 +25,7 @@ class InventoryQueueInfoCommand extends Command
 
         $this->components->twoColumnDetail('Jobs en cola <comment>default</comment>', 'Importación CSV/Excel');
         $this->line('    • ProcessInventoryImportJob — prepara archivo y encadena lotes');
-        $this->line('    • ProcessInventoryImportChunkJob — procesa ~'.config('inventory.rows_per_job', 25).' filas por job');
+        $this->line('    • ProcessInventoryImportChunkJob — fase 1 (PO catálogo) luego fase 2 (stock otras sedes), ~'.config('inventory.rows_per_job', 25).' filas/job');
         $this->newLine();
 
         $this->components->twoColumnDetail('Jobs en cola <comment>images</comment>', 'Descarga de imágenes (lenta)');

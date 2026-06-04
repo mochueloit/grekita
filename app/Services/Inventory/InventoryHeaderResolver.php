@@ -4,34 +4,11 @@ namespace App\Services\Inventory;
 
 class InventoryHeaderResolver
 {
-    /** @var array<string, int> */
+    /** @var array<string, int> normalized header label => column index */
     private array $indexByNormalized = [];
 
-    /** @var array<string, list<string>> */
-    private const CANONICAL_ALIASES = [
-        'sku' => ['sku', 'codigo', 'código'],
-        'titulo' => ['titulo', 'título', 'title', 'nombre'],
-        'cuenta_ml' => ['cuenta ml', 'cuenta mercadolibre', 'cuenta'],
-        'descripcion' => ['descripcion', 'descripción', 'description'],
-        'asociaciones' => ['asociaciones inventario', 'asociaciones'],
-        'cantidad' => ['cantidad', 'qty', 'stock'],
-        'atributos' => ['atributos', 'attributes'],
-        'imagenes' => ['imágenes', 'imagenes', 'images', 'fotos'],
-        'precio' => ['precio', 'price', 'precio local', 'precio venta'],
-        'precio_divisas' => [
-            'precio en divisa',
-            'precio en divisas',
-            'precio en divisa extranjera',
-            'precio divisas',
-            'precio divisa',
-            'precio en moneda extranjera',
-            'precio usd',
-            'precio en usd',
-        ],
-        'divisa' => ['divisa', 'moneda', 'currency', 'codigo divisa', 'código divisa'],
-        'garantia' => ['garantia', 'garantía', 'warranty'],
-        'categoria' => ['categoria', 'categoría', 'category', 'categorias', 'categorías'],
-    ];
+    /** @var array<string, int> canonical field => column index */
+    private array $canonicalIndex = [];
 
     /**
      * @param  array<int, string|null>  $headerRow
@@ -51,10 +28,12 @@ class InventoryHeaderResolver
 
             $this->indexByNormalized[$this->normalize($label)] = (int) $index;
         }
+
+        $this->resolveCanonicalIndices();
     }
 
     /**
-     * @param  array<int, string|null>  $headerMap  label => index (desde import guardado)
+     * @param  array<string, int>  $headerMap  Etiqueta original => índice
      */
     public static function fromHeaderMap(array $headerMap): self
     {
@@ -70,11 +49,23 @@ class InventoryHeaderResolver
     }
 
     /**
+     * @return list<string>
+     */
+    public function detectedHeaders(): array
+    {
+        return array_keys($this->indexByNormalized);
+    }
+
+    /**
      * @param  array<int, string|null>  $row
      */
     public function value(array $row, string $canonicalKey): ?string
     {
-        foreach (self::CANONICAL_ALIASES[$canonicalKey] ?? [] as $alias) {
+        if (isset($this->canonicalIndex[$canonicalKey])) {
+            return $this->cellValue($row, $this->canonicalIndex[$canonicalKey]);
+        }
+
+        foreach ($this->aliasesFor($canonicalKey) as $alias) {
             $index = $this->indexByNormalized[$this->normalize($alias)] ?? null;
 
             if ($index !== null) {
@@ -82,32 +73,86 @@ class InventoryHeaderResolver
             }
         }
 
-        return $this->valueByFuzzy($row, $canonicalKey);
+        return null;
+    }
+
+    public function has(string $canonicalKey): bool
+    {
+        return isset($this->canonicalIndex[$canonicalKey]);
+    }
+
+    private function resolveCanonicalIndices(): void
+    {
+        foreach ($this->indexByNormalized as $headerNorm => $index) {
+            $this->assignCanonical('precio_divisas', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'precio')
+                && (str_contains($h, 'divis') || str_contains($h, 'usd') || str_contains($h, 'moneda extranjera')));
+
+            $this->assignCanonical('precio', $headerNorm, $index, fn (string $h): bool => $h === 'precio'
+                || (str_contains($h, 'precio') && ! str_contains($h, 'divis') && ! str_contains($h, 'usd') && ! str_contains($h, 'moneda extranjera')));
+
+            $this->assignCanonical('divisa', $headerNorm, $index, fn (string $h): bool => $h === 'divisa'
+                || $h === 'moneda'
+                || str_contains($h, 'codigo divisa'));
+
+            $this->assignCanonical('garantia', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'garant'));
+
+            $this->assignCanonical('categoria', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'categor'));
+
+            $this->assignCanonical('sku', $headerNorm, $index, fn (string $h): bool => $h === 'sku' || $h === 'codigo');
+
+            $this->assignCanonical('titulo', $headerNorm, $index, fn (string $h): bool => $h === 'titulo' || $h === 'título' || $h === 'title');
+
+            $this->assignCanonical('cuenta_ml', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'cuenta') && str_contains($h, 'ml'));
+
+            $this->assignCanonical('descripcion', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'descripcion') || str_contains($h, 'description'));
+
+            $this->assignCanonical('asociaciones', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'asociaciones'));
+
+            $this->assignCanonical('cantidad', $headerNorm, $index, fn (string $h): bool => $h === 'cantidad' || $h === 'qty');
+
+            $this->assignCanonical('atributos', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'atributos'));
+
+            $this->assignCanonical('imagenes', $headerNorm, $index, fn (string $h): bool => str_contains($h, 'imagen') || str_contains($h, 'fotos'));
+        }
+    }
+
+    private function assignCanonical(string $canonical, string $headerNorm, int $index, callable $matcher): void
+    {
+        if (isset($this->canonicalIndex[$canonical])) {
+            return;
+        }
+
+        if ($matcher($headerNorm)) {
+            $this->canonicalIndex[$canonical] = $index;
+        }
     }
 
     /**
-     * @param  array<int, string|null>  $row
+     * @return list<string>
      */
-    private function valueByFuzzy(array $row, string $canonicalKey): ?string
+    private function aliasesFor(string $canonicalKey): array
     {
-        foreach ($this->indexByNormalized as $headerNorm => $index) {
-            $match = match ($canonicalKey) {
-                'precio_divisas' => str_contains($headerNorm, 'precio')
-                    && (str_contains($headerNorm, 'divis') || str_contains($headerNorm, 'usd') || str_contains($headerNorm, 'moneda extranjera')),
-                'precio' => $headerNorm === 'precio'
-                    || (str_contains($headerNorm, 'precio') && ! str_contains($headerNorm, 'divis') && ! str_contains($headerNorm, 'usd')),
-                'divisa' => str_contains($headerNorm, 'divisa') || $headerNorm === 'moneda',
-                'garantia' => str_contains($headerNorm, 'garant'),
-                'categoria' => str_contains($headerNorm, 'categor'),
-                default => false,
-            };
-
-            if ($match) {
-                return $this->cellValue($row, $index);
-            }
-        }
-
-        return null;
+        return match ($canonicalKey) {
+            'sku' => ['sku', 'codigo', 'código'],
+            'titulo' => ['titulo', 'título', 'title', 'nombre'],
+            'cuenta_ml' => ['cuenta ml', 'cuenta mercadolibre'],
+            'descripcion' => ['descripcion', 'descripción', 'description'],
+            'asociaciones' => ['asociaciones inventario', 'asociaciones'],
+            'cantidad' => ['cantidad', 'qty', 'stock'],
+            'atributos' => ['atributos', 'attributes'],
+            'imagenes' => ['imágenes', 'imagenes', 'images', 'fotos'],
+            'precio' => ['precio', 'price'],
+            'precio_divisas' => [
+                'precio en divisa',
+                'precio en divisas',
+                'precio divisas',
+                'precio divisa',
+            ],
+            'divisa' => ['divisa', 'moneda', 'currency'],
+            'garantia' => ['garantia', 'garantía', 'warranty'],
+            'categoria' => ['categoria', 'categoría', 'category'],
+            default => [],
+        };
     }
 
     /**

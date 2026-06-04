@@ -8,7 +8,7 @@
         <div class="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
             <p class="text-sm text-slate-500">
                 Sube el inventario exportado de MercadoLibre en <strong>CSV</strong> o <strong>Excel</strong> (.xlsx / .xls).
-                El archivo se guarda de inmediato y el procesamiento (stock, imágenes, atributos) corre en segundo plano.
+                El archivo se guarda de inmediato. La importación corre en <strong>dos fases</strong>: primero catálogo e imágenes (solo Puerto Ordaz), luego una segunda lectura del mismo archivo para stock de Lechería y Caracas.
             </p>
 
             <div id="import-alert" class="mt-6 hidden rounded-lg border px-4 py-3 text-sm"></div>
@@ -450,10 +450,11 @@
                 }
 
                 return `
-                    <p><strong>${stats.processed ?? 0}</strong> filas válidas ·
+                    <p><strong>${stats.processed ?? 0}</strong> filas procesadas ·
                     <strong>${stats.created ?? 0}</strong> creados ·
                     <strong>${stats.updated ?? 0}</strong> actualizados ·
                     <strong>${stats.skipped ?? 0}</strong> omitidas</p>
+                    <p class="mt-1">Fase 2 stock: ${stats.stock_applied ?? 0} aplicado · ${stats.stock_skipped ?? 0} sin producto</p>
                     <p class="mt-1">Atributos: ${stats.attributes_synced ?? 0} · Imágenes en cola: ${stats.images_queued ?? 0}</p>
                 `;
             }
@@ -493,7 +494,10 @@
                 progressFilename.textContent = importData.original_filename;
                 progressStatus.textContent = importData.status_label;
                 progressBadge.textContent = importData.status_label;
-                progressStep.textContent = importData.current_step ? `Paso: ${importData.current_step}` : '';
+                const phaseLabel = importData.import_phase_label || '';
+                progressStep.textContent = phaseLabel
+                    ? `${phaseLabel}${importData.current_step ? ' · ' + importData.current_step : ''}`
+                    : (importData.current_step ? `Paso: ${importData.current_step}` : '');
 
                 const total = importData.total_rows ?? 0;
                 const done = importData.processed_rows ?? 0;
