@@ -12,10 +12,30 @@ class Product extends Model
         'sku',
         'name',
         'brand',
+        'price',
+        'price_foreign',
+        'price_currency',
+        'warranty',
         'short_description',
         'long_description',
         'long_description_html',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'price' => 'decimal:2',
+            'price_foreign' => 'decimal:2',
+        ];
+    }
+
+    public function categories(): BelongsToMany
+    {
+        return $this->belongsToMany(Category::class)
+            ->withPivot('sort_order')
+            ->withTimestamps()
+            ->orderBy('category_product.sort_order');
+    }
 
     public function locations(): BelongsToMany
     {
@@ -40,6 +60,39 @@ class Product extends Model
     public function primaryImage(): ?ProductImage
     {
         return $this->images->firstWhere('is_primary', true) ?? $this->images->first();
+    }
+
+    /**
+     * @return list<array{path: string, segments: list<string>, depth: int}>
+     */
+    public function formattedCategories(): array
+    {
+        return $this->categories
+            ->map(static fn (Category $category): array => [
+                'path' => $category->full_path,
+                'segments' => $category->segmentNames(),
+                'depth' => $category->depth,
+            ])
+            ->values()
+            ->all();
+    }
+
+    public function formattedPrice(): ?string
+    {
+        $parts = [];
+
+        if ($this->price !== null) {
+            $parts[] = number_format((float) $this->price, 2, ',', '.');
+        }
+
+        if ($this->price_foreign !== null) {
+            $foreign = number_format((float) $this->price_foreign, 2, ',', '.');
+            $parts[] = $this->price_currency
+                ? $foreign.' '.$this->price_currency
+                : $foreign.' (divisa)';
+        }
+
+        return $parts !== [] ? implode(' · ', $parts) : null;
     }
 
     /**

@@ -34,10 +34,40 @@
 
                 <h2 class="mt-4 text-2xl font-semibold text-slate-900">{{ $product->name }}</h2>
 
+                @if ($product->formattedPrice())
+                    <p class="mt-3 text-lg font-semibold text-emerald-700">{{ $product->formattedPrice() }}</p>
+                @endif
+
+                @if ($product->warranty)
+                    <p class="mt-2 text-sm text-slate-600">
+                        <span class="font-medium text-slate-700">Garantía:</span> {{ $product->warranty }}
+                    </p>
+                @endif
+
                 @if ($product->short_description)
                     <p class="mt-4 text-sm leading-relaxed text-slate-600">{{ $product->short_description }}</p>
                 @endif
             </section>
+
+            @if ($product->categories->isNotEmpty())
+                <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Categorías</h3>
+                    <div class="mt-4 space-y-3">
+                        @foreach ($product->categories as $category)
+                            <div class="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                                <p class="text-sm font-medium text-slate-800">{{ $category->full_path }}</p>
+                                <div class="mt-2 flex flex-wrap gap-1.5">
+                                    @foreach ($category->segmentNames() as $segment)
+                                        <span class="rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200">
+                                            {{ $segment }}
+                                        </span>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endforeach
+                    </div>
+                </section>
+            @endif
 
             <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div class="flex flex-wrap items-center justify-between gap-3">

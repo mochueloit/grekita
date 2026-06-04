@@ -12,7 +12,7 @@ class ProductController extends Controller
     public function index(): AnonymousResourceCollection
     {
         $products = Product::query()
-            ->with(['locations', 'images', 'attributeDefinitions'])
+            ->with(['locations', 'images', 'attributeDefinitions', 'categories'])
             ->orderBy('sku')
             ->paginate(20);
 

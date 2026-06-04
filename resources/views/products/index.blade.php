@@ -145,6 +145,27 @@
                         </a>
                     </h2>
 
+                    @if ($product->formattedPrice())
+                        <p class="mt-2 text-sm font-semibold text-emerald-700">{{ $product->formattedPrice() }}</p>
+                    @endif
+
+                    @if ($product->warranty)
+                        <p class="mt-1 text-xs text-slate-500">Garantía: {{ $product->warranty }}</p>
+                    @endif
+
+                    @if ($product->categories->isNotEmpty())
+                        <div class="mt-3">
+                            <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Categorías</p>
+                            <div class="flex flex-col gap-1">
+                                @foreach ($product->categories as $category)
+                                    <span class="text-xs text-slate-600" title="{{ $category->full_path }}">
+                                        {{ $category->full_path }}
+                                    </span>
+                                @endforeach
+                            </div>
+                        </div>
+                    @endif
+
                     @if ($product->short_description)
                         <p class="mt-2 line-clamp-2 text-sm text-slate-500">
                             {{ $product->short_description }}

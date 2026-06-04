@@ -27,6 +27,9 @@ class InventoryCsvImporter
         private readonly ProductImageParser $imageParser,
         private readonly ProductAttributeSyncService $attributeSync,
         private readonly ProductImageDownloader $imageDownloader,
+        private readonly ProductPriceParser $priceParser,
+        private readonly ProductCategoryParser $categoryParser,
+        private readonly ProductCategorySyncService $categorySync,
     ) {}
 
     public function prepareQueuedImport(InventoryImport $import): void
@@ -369,11 +372,28 @@ class InventoryCsvImporter
         $attributes = $this->attributeParser->parse($rawAttributes);
         $cleanDescription = $this->descriptionCleaner->clean($description);
         $location = $this->locationResolver->resolveFromCuentaMl($cuentaMl);
+        $categoryRaw = $this->valueFrom($row, 'Categoría', 'Categoria', 'Category');
 
         return [
             'sku' => $sku,
             'name' => $title !== '' ? $title : $sku,
             'brand' => $this->brandExtractor->extract($attributes, $rawAttributes),
+            'price' => $this->priceParser->parse($this->valueFrom($row, 'Precio', 'Price')),
+            'price_foreign' => $this->priceParser->parse($this->valueFrom(
+                $row,
+                'Precio en divisa',
+                'Precio en Divisa',
+                'Precio Divisa',
+            )),
+            'price_currency' => $this->priceParser->parseCurrency($this->valueFrom(
+                $row,
+                'Divisa',
+                'Moneda',
+                'Currency',
+            )) ?? $this->inferCurrencyCode($this->valueFrom($row, 'Precio en divisa', 'Precio en Divisa')),
+            'warranty' => trim($this->valueFrom($row, 'Garantía', 'Garantia', 'Warranty') ?? '') ?: null,
+            'category_paths' => $this->categoryParser->parse($categoryRaw),
+            'category_raw' => $categoryRaw,
             'short_description' => $this->descriptionCleaner->toShort($cleanDescription),
             'long_description' => $cleanDescription,
             'long_description_html' => $this->descriptionFormatter->toHtml($cleanDescription),
@@ -543,12 +563,16 @@ class InventoryCsvImporter
     }
 
     /**
-     * @param  array{product: array<string, mixed>, attributes: array<string, string>, image_urls: list<string>}  $metadata
-     * @return array{attributes: int, images_queued: int, images_failed: int}
+     * @param  array{product: array<string, mixed>, attributes: array<string, string>, image_urls: list<string>, category_paths: list<string>, category_raw: ?string}  $metadata
+     * @return array{attributes: int, categories: int, images_queued: int, images_failed: int}
      */
     private function syncCatalog(Product $product, array $metadata, ?int $importId = null): array
     {
         $attributes = $this->attributeSync->sync($product, $metadata['attributes'] ?? []);
+        $categories = $this->categorySync->sync(
+            $product,
+            $metadata['category_paths'] ?? $metadata['category_raw'] ?? [],
+        );
 
         $imageStats = ['queued' => 0, 'failed' => 0];
 
@@ -558,6 +582,7 @@ class InventoryCsvImporter
 
         return [
             'attributes' => $attributes,
+            'categories' => $categories,
             'images_queued' => $imageStats['queued'],
             'images_failed' => $imageStats['failed'],
         ];
@@ -613,7 +638,7 @@ class InventoryCsvImporter
 
     /**
      * @param  array<string, mixed>  $row
-     * @return array{product: array<string, mixed>, attributes: array<string, string>, image_urls: list<string>}
+     * @return array{product: array<string, mixed>, attributes: array<string, string>, image_urls: list<string>, category_paths: list<string>, category_raw: ?string}
      */
     private function extractMetadata(array $row): array
     {
@@ -621,13 +646,36 @@ class InventoryCsvImporter
             'product' => [
                 'name' => $row['name'],
                 'brand' => $row['brand'],
+                'price' => $row['price'],
+                'price_foreign' => $row['price_foreign'],
+                'price_currency' => $row['price_currency'],
+                'warranty' => $row['warranty'],
                 'short_description' => $row['short_description'],
                 'long_description' => $row['long_description'],
                 'long_description_html' => $row['long_description_html'],
             ],
             'attributes' => $row['attributes'],
             'image_urls' => $row['image_urls'],
+            'category_paths' => $row['category_paths'] ?? [],
+            'category_raw' => $row['category_raw'] ?? null,
         ];
+    }
+
+    /**
+     * @param  array<int, string|null>  $row
+     * @param  list<string>  $columns
+     */
+    private function valueFrom(array $row, string ...$columns): ?string
+    {
+        foreach ($columns as $column) {
+            $value = $this->value($row, $column);
+
+            if ($value !== null && trim($value) !== '') {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -642,5 +690,20 @@ class InventoryCsvImporter
         $index = $this->headerMap[$column];
 
         return isset($row[$index]) ? (string) $row[$index] : null;
+    }
+
+    private function inferCurrencyCode(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        if (preg_match('/^[A-Za-z]{3}$/', $trimmed) === 1) {
+            return strtoupper($trimmed);
+        }
+
+        return null;
     }
 }

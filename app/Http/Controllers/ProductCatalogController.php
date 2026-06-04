@@ -33,7 +33,7 @@ class ProductCatalogController extends Controller
         }
 
         $products = Product::query()
-            ->with(['locations', 'images', 'attributeDefinitions'])
+            ->with(['locations', 'images', 'attributeDefinitions', 'categories'])
             ->when($search !== '', function (Builder $query) use ($search): void {
                 $query->where(function (Builder $inner) use ($search): void {
                     $inner->where('sku', 'like', "%{$search}%")
@@ -97,7 +97,7 @@ class ProductCatalogController extends Controller
 
     public function show(Product $product): View
     {
-        $product->load(['locations', 'images', 'attributeDefinitions']);
+        $product->load(['locations', 'images', 'attributeDefinitions', 'categories']);
 
         return view('products.show', [
             'product' => $product,
