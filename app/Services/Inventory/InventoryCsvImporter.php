@@ -13,6 +13,8 @@ class InventoryCsvImporter
     /** @var array<string, int> */
     private array $headerMap = [];
 
+    private ?InventoryHeaderResolver $headerResolver = null;
+
     /** @var array<string, true> */
     private array $countedUpdatedSkus = [];
 
@@ -67,6 +69,7 @@ class InventoryCsvImporter
         $limit = config('inventory.rows_per_job', 25);
 
         $this->headerMap = $import->header_map ?? [];
+        $this->bootHeaderResolver();
         $checkpoint = $import->checkpoint ?? ['counted_updated_skus' => []];
         $this->countedUpdatedSkus = $checkpoint['counted_updated_skus'] ?? [];
 
@@ -201,6 +204,7 @@ class InventoryCsvImporter
         }
 
         $this->headerMap = $this->buildHeaderMap($header);
+        $this->bootHeaderResolver();
         $this->countedUpdatedSkus = [];
 
         $stats = $this->emptyStats();
@@ -349,9 +353,9 @@ class InventoryCsvImporter
      */
     private function tryParseRow(array $row, int $dataRowNumber, ?InventorySkippedRowLogger $skipped = null): ?array
     {
-        $sku = trim($this->value($row, 'SKU') ?? '');
-        $title = trim($this->value($row, 'Título') ?? '');
-        $cuentaMl = trim($this->value($row, 'Cuenta ML') ?? '');
+        $sku = trim($this->headerValue($row, 'sku') ?? '');
+        $title = trim($this->headerValue($row, 'titulo') ?? '');
+        $cuentaMl = trim($this->headerValue($row, 'cuenta_ml') ?? '');
 
         if ($sku === '') {
             $this->recordSkip($skipped, $dataRowNumber, null, $title ?: null, $cuentaMl ?: null, 'empty_sku', 'SKU vacío: la fila no tiene identificador de producto.');
@@ -365,43 +369,50 @@ class InventoryCsvImporter
             return null;
         }
 
-        $description = trim($this->value($row, 'Descripción') ?? '');
-        $associations = trim($this->value($row, 'Asociaciones inventario') ?? '');
-        $quantity = (int) ($this->value($row, 'Cantidad') ?? 0);
-        $rawAttributes = $this->value($row, 'Atributos') ?? '';
+        $description = trim($this->headerValue($row, 'descripcion') ?? '');
+        $associations = trim($this->headerValue($row, 'asociaciones') ?? '');
+        $quantity = (int) ($this->headerValue($row, 'cantidad') ?? 0);
+        $rawAttributes = $this->headerValue($row, 'atributos') ?? '';
         $attributes = $this->attributeParser->parse($rawAttributes);
         $cleanDescription = $this->descriptionCleaner->clean($description);
         $location = $this->locationResolver->resolveFromCuentaMl($cuentaMl);
-        $categoryRaw = $this->valueFrom($row, 'Categoría', 'Categoria', 'Category');
+        $isPrimaryCatalog = $location->slug === LocationResolver::PRIMARY_LOCATION_SLUG;
+        $categoryRaw = $this->headerValue($row, 'categoria');
+
+        $foreignRaw = null;
+        $price = null;
+        $priceForeign = null;
+        $priceCurrency = null;
+
+        if ($isPrimaryCatalog) {
+            $foreignRaw = $this->headerValue($row, 'precio_divisas');
+            $priceForeign = $this->priceParser->parse($foreignRaw);
+            $price = $this->priceParser->parse($this->headerValue($row, 'precio'));
+            $priceCurrency = $this->priceParser->parseCurrency($this->headerValue($row, 'divisa'));
+
+            if ($priceCurrency === null && $priceForeign === null) {
+                $priceCurrency = $this->inferCurrencyCode($foreignRaw);
+            }
+        }
 
         return [
             'sku' => $sku,
             'name' => $title !== '' ? $title : $sku,
             'brand' => $this->brandExtractor->extract($attributes, $rawAttributes),
-            'price' => $this->priceParser->parse($this->valueFrom($row, 'Precio', 'Price')),
-            'price_foreign' => $this->priceParser->parse($this->valueFrom(
-                $row,
-                'Precio en divisa',
-                'Precio en Divisa',
-                'Precio Divisa',
-            )),
-            'price_currency' => $this->priceParser->parseCurrency($this->valueFrom(
-                $row,
-                'Divisa',
-                'Moneda',
-                'Currency',
-            )) ?? $this->inferCurrencyCode($this->valueFrom($row, 'Precio en divisa', 'Precio en Divisa')),
-            'warranty' => trim($this->valueFrom($row, 'Garantía', 'Garantia', 'Warranty') ?? '') ?: null,
+            'price' => $price,
+            'price_foreign' => $priceForeign,
+            'price_currency' => $priceCurrency,
+            'warranty' => trim($this->headerValue($row, 'garantia') ?? '') ?: null,
             'category_paths' => $this->categoryParser->parse($categoryRaw),
             'category_raw' => $categoryRaw,
             'short_description' => $this->descriptionCleaner->toShort($cleanDescription),
             'long_description' => $cleanDescription,
             'long_description_html' => $this->descriptionFormatter->toHtml($cleanDescription),
             'attributes' => $attributes,
-            'image_urls' => $this->imageParser->parse($this->value($row, 'Imágenes') ?? ''),
+            'image_urls' => $this->imageParser->parse($this->headerValue($row, 'imagenes') ?? ''),
             'cuenta_ml' => $cuentaMl,
             'location_slug' => $location->slug,
-            'is_primary_catalog' => $location->slug === LocationResolver::PRIMARY_LOCATION_SLUG,
+            'is_primary_catalog' => $isPrimaryCatalog,
             'stock' => $this->associationParser->parseStock($associations, $quantity),
             '_data_row' => $dataRowNumber,
         ];
@@ -661,18 +672,20 @@ class InventoryCsvImporter
         ];
     }
 
+    private function bootHeaderResolver(): void
+    {
+        $this->headerResolver = $this->headerMap !== []
+            ? InventoryHeaderResolver::fromHeaderMap($this->headerMap)
+            : null;
+    }
+
     /**
      * @param  array<int, string|null>  $row
-     * @param  list<string>  $columns
      */
-    private function valueFrom(array $row, string ...$columns): ?string
+    private function headerValue(array $row, string $canonicalKey): ?string
     {
-        foreach ($columns as $column) {
-            $value = $this->value($row, $column);
-
-            if ($value !== null && trim($value) !== '') {
-                return $value;
-            }
+        if ($this->headerResolver !== null) {
+            return $this->headerResolver->value($row, $canonicalKey);
         }
 
         return null;
@@ -689,7 +702,7 @@ class InventoryCsvImporter
 
         $index = $this->headerMap[$column];
 
-        return isset($row[$index]) ? (string) $row[$index] : null;
+        return isset($row[$index]) ? trim((string) $row[$index]) : null;
     }
 
     private function inferCurrencyCode(?string $value): ?string

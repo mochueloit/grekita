@@ -22,6 +22,10 @@ class ProductPriceParser
             return null;
         }
 
+        if (preg_match('/^[A-Za-z]{3}$/i', $value) === 1 && ! preg_match('/\d/', $normalized)) {
+            return null;
+        }
+
         $hasComma = str_contains($normalized, ',');
         $hasDot = str_contains($normalized, '.');
 
