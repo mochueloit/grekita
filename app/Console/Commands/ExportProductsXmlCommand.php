@@ -20,7 +20,8 @@ class ExportProductsXmlCommand extends Command
         $this->table(
             ['Campo', 'Valor'],
             [
-                ['Productos', (string) $result['product_count']],
+                ['Productos en XML', (string) $result['product_count']],
+                ['Productos en BD', (string) ($result['database_product_count'] ?? $result['product_count'])],
                 ['Generado', $result['generated_at']],
                 ['Ruta relativa', $result['relative_path']],
                 ['Ruta absoluta', $result['absolute_path']],

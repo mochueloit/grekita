@@ -40,7 +40,16 @@ class ProductXmlExportService
 
         Storage::disk($disk)->makeDirectory($relativeDir);
 
+        $databaseProductCount = Product::query()->count();
         $productCount = $this->writeXmlFile($disk, $relativePath, $generatedAt);
+
+        if ($productCount !== $databaseProductCount) {
+            throw new \RuntimeException(sprintf(
+                'El XML exportó %d productos pero en la base hay %d. Regenera el archivo; si persiste, revisa productos con datos corruptos.',
+                $productCount,
+                $databaseProductCount,
+            ));
+        }
 
         Storage::disk($disk)->makeDirectory(dirname($latestRelativePath));
         Storage::disk($disk)->put($latestRelativePath, Storage::disk($disk)->get($relativePath));
@@ -51,6 +60,7 @@ class ProductXmlExportService
         $manifest = [
             'generated_at' => $generatedAt->toIso8601String(),
             'product_count' => $productCount,
+            'database_product_count' => $databaseProductCount,
             'relative_path' => $relativePath,
             'absolute_path' => $absolutePath,
             'latest_relative_path' => $latestRelativePath,
@@ -68,6 +78,7 @@ class ProductXmlExportService
         return [
             'generated_at' => $manifest['generated_at'],
             'product_count' => $productCount,
+            'database_product_count' => $databaseProductCount,
             'relative_path' => $relativePath,
             'absolute_path' => $absolutePath,
             'manifest_relative_path' => $manifestRelativePath,
@@ -134,15 +145,15 @@ class ProductXmlExportService
 
         $count = 0;
 
-        Product::query()
-            ->with(['locations', 'images', 'attributeDefinitions', 'categories'])
-            ->orderBy('sku')
-            ->chunkById(100, function ($products) use ($writer, &$count): void {
-                foreach ($products as $product) {
-                    $this->writeProductNode($writer, $product);
-                    $count++;
-                }
-            });
+        foreach (
+            Product::query()
+                ->with(['locations', 'images', 'attributeDefinitions', 'categories'])
+                ->orderBy('sku')
+                ->cursor() as $product
+        ) {
+            $this->writeProductNode($writer, $product);
+            $count++;
+        }
 
         $writer->endElement(); // products
 
