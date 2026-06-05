@@ -57,4 +57,20 @@ class ProductImage extends Model
 
         return $this->source_url;
     }
+
+    /**
+     * Solo URL pública del archivo ya descargado en storage (sin fallback remoto).
+     */
+    public function storedPublicUrl(): ?string
+    {
+        if ($this->path === null || $this->path === '') {
+            return null;
+        }
+
+        if (! Storage::disk('public')->exists($this->path)) {
+            return null;
+        }
+
+        return Storage::disk('public')->url($this->path);
+    }
 }

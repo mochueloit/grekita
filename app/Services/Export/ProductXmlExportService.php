@@ -2,8 +2,8 @@
 
 namespace App\Services\Export;
 
-use App\Http\Resources\ProductResource;
 use App\Models\Product;
+use App\Services\Inventory\ProductStockService;
 use Illuminate\Support\Facades\Storage;
 use XMLWriter;
 
@@ -11,18 +11,22 @@ class ProductXmlExportService
 {
     public function __construct(
         private readonly ProductXmlFlatFields $flatFields,
+        private readonly ProductStockService $stockService,
     ) {}
+
     /**
      * @return array{
      *     generated_at: string,
      *     product_count: int,
+     *     database_product_count: int,
      *     relative_path: string,
      *     absolute_path: string,
      *     manifest_relative_path: string,
      *     latest_relative_path: string,
      *     latest_absolute_path: string,
      *     trigger: string,
-     *     disk: string
+     *     disk: string,
+     *     checksum_sha256: ?string
      * }
      */
     public function generate(string $trigger = 'manual'): array
@@ -139,7 +143,7 @@ class ProductXmlExportService
         $writer->startElement('catalog');
         $writer->writeAttribute('generated_at', $generatedAt->toIso8601String());
         $writer->writeAttribute('generator', 'grekita-wp-export');
-        $writer->writeAttribute('version', '1');
+        $writer->writeAttribute('version', '2');
 
         $writer->startElement('products');
 
@@ -155,10 +159,10 @@ class ProductXmlExportService
             $count++;
         }
 
-        $writer->endElement(); // products
+        $writer->endElement();
 
-        $this->writeScalar($writer, 'product_count', $count);
-        $writer->endElement(); // catalog
+        $this->writeRequiredScalar($writer, 'product_count', $count);
+        $writer->endElement();
         $writer->endDocument();
         $writer->flush();
 
@@ -167,39 +171,85 @@ class ProductXmlExportService
 
     private function writeProductNode(XMLWriter $writer, Product $product): void
     {
-        /** @var array<string, mixed> $payload */
-        $payload = ProductResource::make($product)->resolve();
+        $attributes = $product->formattedAttributes();
+        $dimensions = $this->flatFields->dimensions($attributes);
+        $imageUrls = $this->flatFields->localImageUrls($product);
+        $stockRows = $this->stockService->stocksForProduct($product);
 
         $writer->startElement('product');
 
-        $this->writeScalar($writer, 'id', $payload['id'] ?? null);
-        $this->writeScalar($writer, 'sku', $payload['sku'] ?? null);
-        $this->writeScalar($writer, 'name', $payload['name'] ?? null);
-        $this->writeScalar($writer, 'brand', $payload['brand'] ?? null);
-        $this->writeScalar($writer, 'price', $payload['price'] ?? null);
-        $this->writeScalar($writer, 'price_foreign', $payload['price_foreign'] ?? null);
-        $this->writeScalar($writer, 'price_currency', $payload['price_currency'] ?? null);
-        $this->writeScalar($writer, 'price_formatted', $payload['price_formatted'] ?? null);
-        $this->writeScalar($writer, 'warranty', $payload['warranty'] ?? null);
-        $this->writeScalar($writer, 'principal_stock', $payload['principal_stock'] ?? 0);
+        $this->writeRequiredScalar($writer, 'id', $product->id);
+        $this->writeRequiredScalar($writer, 'sku', $product->sku);
+        $this->writeRequiredScalar($writer, 'name', $product->name);
+        $this->writeRequiredScalar($writer, 'brand', $this->flatFields->brandValue($product, $attributes));
+        $this->writeRequiredScalar($writer, 'price', $product->price ?? 0);
+        $this->writeRequiredScalar($writer, 'price_foreign', $product->price_foreign ?? 0);
+        $this->writeRequiredScalar($writer, 'price_currency', $product->price_currency);
+        $this->writeRequiredScalar($writer, 'price_formatted', $product->formattedPrice());
+        $this->writeRequiredScalar($writer, 'warranty', $product->warranty);
+        $this->writeRequiredScalar($writer, 'principal_stock', $product->principalStockTotal());
 
-        $categories = $payload['categories'] ?? [];
-        $attributes = $payload['attributes'] ?? [];
-        $dimensions = $this->flatFields->dimensions($attributes);
+        $this->writeRequiredScalar($writer, 'categories', $this->flatFields->categoriesTextFromProduct($product));
+        $this->writeRequiredScalar($writer, 'width', $dimensions['width']);
+        $this->writeRequiredScalar($writer, 'height', $dimensions['height']);
+        $this->writeRequiredScalar($writer, 'length', $dimensions['length']);
+        $this->writeRequiredScalar($writer, 'weight', $dimensions['weight']);
 
-        $this->writeScalar($writer, 'categories', $this->flatFields->categoriesText($categories));
-        $this->writeScalar($writer, 'width', $dimensions['width']);
-        $this->writeScalar($writer, 'height', $dimensions['height']);
-        $this->writeScalar($writer, 'weight', $dimensions['weight']);
+        $this->writeRequiredCData($writer, 'short_description', $product->short_description);
+        $this->writeRequiredCData($writer, 'long_description', $product->long_description);
+        $this->writeRequiredCData($writer, 'long_description_html', $product->long_description_html);
 
-        $this->writeCDataElement($writer, 'short_description', $payload['short_description'] ?? null);
-        $this->writeCDataElement($writer, 'long_description', $payload['long_description'] ?? null);
-        $this->writeCDataElement($writer, 'long_description_html', $payload['long_description_html'] ?? null);
+        $this->writeRequiredScalar($writer, 'images_urls', $this->flatFields->localImageUrlsText($product));
+        $this->writeImages($writer, $imageUrls);
 
+        $this->writeStockLocations($writer, $stockRows);
         $this->writeAttributes($writer, $this->flatFields->attributesForXml($attributes));
-        $this->writeImages($writer, $payload['images'] ?? []);
-        $this->writeStock($writer, $payload['stock'] ?? []);
-        $this->writeLocations($writer, $payload['locations'] ?? []);
+
+        $writer->endElement();
+    }
+
+    /**
+     * @param  list<string>  $imageUrls
+     */
+    private function writeImages(XMLWriter $writer, array $imageUrls): void
+    {
+        $writer->startElement('images');
+
+        if ($imageUrls === []) {
+            $this->writeRequiredScalar($writer, 'image', '0');
+        } else {
+            foreach ($imageUrls as $index => $url) {
+                $writer->startElement('image');
+                $this->writeRequiredScalar($writer, 'sort_order', $index);
+                $this->writeRequiredScalar($writer, 'url', $url);
+                $this->writeRequiredScalar($writer, 'is_primary', $index === 0 ? 1 : 0);
+                $writer->endElement();
+            }
+        }
+
+        $writer->endElement();
+    }
+
+    /**
+     * @param  list<array{id: int, slug: string, name: string, stock: int, in_stock: bool, registered: bool}>  $stockRows
+     */
+    private function writeStockLocations(XMLWriter $writer, array $stockRows): void
+    {
+        $writer->startElement('stock');
+
+        $principal = array_sum(array_column($stockRows, 'stock'));
+        $this->writeRequiredScalar($writer, 'principal', $principal);
+
+        $writer->startElement('locations');
+        foreach ($stockRows as $location) {
+            $writer->startElement('location');
+            $this->writeRequiredScalar($writer, 'slug', $location['slug']);
+            $this->writeRequiredScalar($writer, 'name', $location['name']);
+            $this->writeRequiredScalar($writer, 'stock', $location['stock']);
+            $this->writeRequiredScalar($writer, 'in_stock', $location['in_stock'] ? 1 : 0);
+            $writer->endElement();
+        }
+        $writer->endElement();
 
         $writer->endElement();
     }
@@ -211,81 +261,26 @@ class ProductXmlExportService
     {
         $writer->startElement('attributes');
 
-        foreach ($attributes as $attribute) {
-            $writer->startElement('attribute');
-            $this->writeScalar($writer, 'code', $attribute['code'] ?? null);
-            $this->writeScalar($writer, 'label', $attribute['label'] ?? null);
-            $this->writeCDataElement($writer, 'value', $attribute['value'] ?? null);
-            $writer->endElement();
+        if ($attributes === []) {
+            $this->writeRequiredScalar($writer, 'attribute', '0');
+        } else {
+            foreach ($attributes as $attribute) {
+                $writer->startElement('attribute');
+                $this->writeRequiredScalar($writer, 'code', $attribute['code'] ?? '0');
+                $this->writeRequiredScalar($writer, 'label', $attribute['label'] ?? '0');
+                $this->writeRequiredCData($writer, 'value', $attribute['value'] ?? '0');
+                $writer->endElement();
+            }
         }
 
         $writer->endElement();
     }
 
-    /**
-     * @param  list<array{url: ?string, path: ?string, source_url: ?string, is_primary: bool}>  $images
-     */
-    private function writeImages(XMLWriter $writer, array $images): void
-    {
-        $writer->startElement('images');
-
-        foreach ($images as $index => $image) {
-            $writer->startElement('image');
-            $this->writeScalar($writer, 'sort_order', $index);
-            $this->writeScalar($writer, 'url', $image['url'] ?? null);
-            $this->writeScalar($writer, 'path', $image['path'] ?? null);
-            $this->writeScalar($writer, 'source_url', $image['source_url'] ?? null);
-            $this->writeScalar($writer, 'is_primary', ! empty($image['is_primary']) ? 1 : 0);
-            $writer->endElement();
-        }
-
-        $writer->endElement();
-    }
-
-    /**
-     * @param  array{principal?: int, by_location?: list<array{slug: string, name: string, stock: int, in_stock: bool}>}  $stock
-     */
-    private function writeStock(XMLWriter $writer, array $stock): void
-    {
-        $writer->startElement('stock');
-        $this->writeScalar($writer, 'principal', $stock['principal'] ?? 0);
-
-        $writer->startElement('locations');
-        foreach ($stock['by_location'] ?? [] as $location) {
-            $writer->startElement('location');
-            $this->writeScalar($writer, 'slug', $location['slug'] ?? null);
-            $this->writeScalar($writer, 'name', $location['name'] ?? null);
-            $this->writeScalar($writer, 'stock', $location['stock'] ?? 0);
-            $this->writeScalar($writer, 'in_stock', ! empty($location['in_stock']) ? 1 : 0);
-            $writer->endElement();
-        }
-        $writer->endElement();
-
-        $writer->endElement();
-    }
-
-    /**
-     * @param  array<string, array{slug: string, stock: int, in_stock: bool}>  $locations
-     */
-    private function writeLocations(XMLWriter $writer, array $locations): void
-    {
-        $writer->startElement('locations_legacy');
-
-        foreach ($locations as $name => $location) {
-            $writer->startElement('location');
-            $this->writeScalar($writer, 'name', $name);
-            $this->writeScalar($writer, 'slug', $location['slug'] ?? null);
-            $this->writeScalar($writer, 'stock', $location['stock'] ?? 0);
-            $this->writeScalar($writer, 'in_stock', ! empty($location['in_stock']) ? 1 : 0);
-            $writer->endElement();
-        }
-
-        $writer->endElement();
-    }
-
-    private function writeScalar(XMLWriter $writer, string $name, mixed $value): void
+    private function writeRequiredScalar(XMLWriter $writer, string $name, mixed $value): void
     {
         if ($value === null || $value === '') {
+            $writer->writeElement($name, '0');
+
             return;
         }
 
@@ -298,14 +293,16 @@ class ProductXmlExportService
         $writer->writeElement($name, htmlspecialchars((string) $value, ENT_XML1 | ENT_COMPAT, 'UTF-8'));
     }
 
-    private function writeCDataElement(XMLWriter $writer, string $name, mixed $value): void
+    private function writeRequiredCData(XMLWriter $writer, string $name, mixed $value): void
     {
+        $writer->startElement($name);
+
         if ($value === null || $value === '') {
-            return;
+            $writer->writeCData('0');
+        } else {
+            $writer->writeCData((string) $value);
         }
 
-        $writer->startElement($name);
-        $writer->writeCData((string) $value);
         $writer->endElement();
     }
 }

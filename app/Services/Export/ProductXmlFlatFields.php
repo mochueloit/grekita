@@ -2,11 +2,14 @@
 
 namespace App\Services\Export;
 
+use App\Models\Product;
+
 class ProductXmlFlatFields
 {
     private const DIMENSION_CODES = [
         'width' => ['WIDTH', 'TOTAL_WIDTH'],
         'height' => ['HEIGHT', 'TOTAL_HEIGHT'],
+        'length' => ['LENGTH', 'DEPTH'],
         'weight' => ['WEIGHT'],
     ];
 
@@ -16,44 +19,92 @@ class ProductXmlFlatFields
         'TOTAL_WIDTH',
         'HEIGHT',
         'TOTAL_HEIGHT',
+        'LENGTH',
+        'DEPTH',
         'WEIGHT',
+        'BRAND',
     ];
 
-    /**
-     * @param  list<array{path: string, segments: list<string>, depth: int}>  $categories
-     */
-    public function categoriesText(array $categories): ?string
+    public function categoriesTextFromProduct(Product $product): string
     {
-        $paths = [];
-
-        foreach ($categories as $category) {
-            $path = trim((string) ($category['path'] ?? ''));
-
-            if ($path !== '') {
-                $paths[] = $path;
-            }
+        if (! $product->relationLoaded('categories')) {
+            $product->load('categories');
         }
 
-        if ($paths === []) {
-            return null;
+        $paths = $product->categories
+            ->sortBy(fn ($category) => (int) ($category->pivot->sort_order ?? 0))
+            ->map(static function ($category): string {
+                $path = trim((string) ($category->full_path ?? ''));
+
+                if ($path !== '') {
+                    return $path;
+                }
+
+                return trim((string) ($category->name ?? ''));
+            })
+            ->filter(static fn (string $path): bool => $path !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        return $paths === [] ? '0' : implode(', ', $paths);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function localImageUrls(Product $product): array
+    {
+        if (! $product->relationLoaded('images')) {
+            $product->load('images');
         }
 
-        return implode(', ', $paths);
+        return $product->images
+            ->sortBy(fn ($image) => (int) ($image->sort_order ?? 0))
+            ->map(static fn ($image) => $image->storedPublicUrl())
+            ->filter(static fn (?string $url): bool => $url !== null && $url !== '')
+            ->values()
+            ->all();
+    }
+
+    public function localImageUrlsText(Product $product): string
+    {
+        $urls = $this->localImageUrls($product);
+
+        return $urls === [] ? '0' : implode(', ', $urls);
     }
 
     /**
      * @param  list<array{code: string, label: string, value: string}>  $attributes
-     * @return array{width: ?string, height: ?string, weight: ?string}
+     * @return array{width: string, height: string, length: string, weight: string}
      */
     public function dimensions(array $attributes): array
     {
         $byCode = $this->indexAttributesByCode($attributes);
 
         return [
-            'width' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['width']),
-            'height' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['height']),
-            'weight' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['weight']),
+            'width' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['width']) ?? '0',
+            'height' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['height']) ?? '0',
+            'length' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['length']) ?? '0',
+            'weight' => $this->firstMatchingValue($byCode, self::DIMENSION_CODES['weight']) ?? '0',
         ];
+    }
+
+    /**
+     * @param  list<array{code: string, label: string, value: string}>  $attributes
+     */
+    public function brandValue(Product $product, array $attributes): string
+    {
+        $brand = trim((string) ($product->brand ?? ''));
+
+        if ($brand !== '') {
+            return $brand;
+        }
+
+        $byCode = $this->indexAttributesByCode($attributes);
+        $fromAttribute = trim((string) ($byCode['BRAND'] ?? ''));
+
+        return $fromAttribute !== '' ? $fromAttribute : '0';
     }
 
     /**
