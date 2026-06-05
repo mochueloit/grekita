@@ -65,7 +65,7 @@ class ProductXmlExportServiceTest extends TestCase
         $xml = Storage::disk('local')->get($result['relative_path']);
 
         $this->assertStringContainsString('<brand>Greka</brand>', $xml);
-        $this->assertStringContainsString('<categories>Juguetes &gt; Rubik</categories>', $xml);
+        $this->assertStringContainsString('<categories><![CDATA[Juguetes > Rubik]]></categories>', $xml);
         $this->assertStringContainsString('<width>12 cm</width>', $xml);
         $this->assertStringContainsString('<height>0</height>', $xml);
         $this->assertStringContainsString('<length>0</length>', $xml);

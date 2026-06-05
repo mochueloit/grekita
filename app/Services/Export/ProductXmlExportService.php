@@ -189,7 +189,7 @@ class ProductXmlExportService
         $this->writeRequiredScalar($writer, 'warranty', $product->warranty);
         $this->writeRequiredScalar($writer, 'principal_stock', $product->principalStockTotal());
 
-        $this->writeRequiredScalar($writer, 'categories', $this->flatFields->categoriesTextFromProduct($product));
+        $this->writeRequiredCData($writer, 'categories', $this->flatFields->categoriesTextFromProduct($product));
         $this->writeRequiredScalar($writer, 'width', $dimensions['width']);
         $this->writeRequiredScalar($writer, 'height', $dimensions['height']);
         $this->writeRequiredScalar($writer, 'length', $dimensions['length']);
@@ -290,7 +290,12 @@ class ProductXmlExportService
             return;
         }
 
-        $writer->writeElement($name, htmlspecialchars((string) $value, ENT_XML1 | ENT_COMPAT, 'UTF-8'));
+        $writer->writeElement($name, $this->escapeXmlText((string) $value));
+    }
+
+    private function escapeXmlText(string $value): string
+    {
+        return str_replace(['&', '<'], ['&amp;', '&lt;'], $value);
     }
 
     private function writeRequiredCData(XMLWriter $writer, string $name, mixed $value): void
