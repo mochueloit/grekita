@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\ExportProductsXmlJob;
 use App\Models\InventoryImport;
 use App\Services\Inventory\InventoryCsvImporter;
 use App\Services\Inventory\InventoryImageDownloadLogger;
@@ -105,6 +106,9 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
             if (($stats['images_queued'] ?? 0) > 0) {
                 $progress->log('Las imágenes se descargan en segundo plano (cola lenta, ~3 s entre cada una).');
             }
+
+            ExportProductsXmlJob::dispatch('inventory_import:'.$import->id, $import->id)->afterCommit();
+            $progress->log('Exportación XML para WordPress encolada (se generará al terminar este lote en el worker).');
         } catch (InvalidArgumentException $exception) {
             $this->markFailed($import, $exception->getMessage());
         } catch (Throwable $exception) {
