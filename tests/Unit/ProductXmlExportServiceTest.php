@@ -21,11 +21,19 @@ class ProductXmlExportServiceTest extends TestCase
 
     public function test_generates_xml_with_dated_folder_and_latest_copy(): void
     {
-        Product::query()->create([
+        $product = Product::query()->create([
             'sku' => 'XML-1',
             'name' => 'Producto XML',
             'principal_stock' => 0,
         ]);
+
+        $width = \App\Models\AttributeDefinition::query()->create([
+            'code' => 'WIDTH',
+            'label_es' => 'Ancho',
+            'slug' => 'width',
+        ]);
+
+        $product->attributeDefinitions()->attach($width->id, ['value' => '12 cm']);
 
         $result = app(ProductXmlExportService::class)->generate('test');
 
@@ -38,6 +46,8 @@ class ProductXmlExportServiceTest extends TestCase
 
         $this->assertStringContainsString('<?xml version="1.0" encoding="UTF-8"?>', $xml);
         $this->assertStringContainsString('<sku>XML-1</sku>', $xml);
+        $this->assertStringContainsString('<width>12 cm</width>', $xml);
         $this->assertStringContainsString('<product_count>1</product_count>', $xml);
+        $this->assertStringNotContainsString('<categories>', $xml);
     }
 }

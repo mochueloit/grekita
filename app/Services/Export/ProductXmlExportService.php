@@ -9,6 +9,9 @@ use XMLWriter;
 
 class ProductXmlExportService
 {
+    public function __construct(
+        private readonly ProductXmlFlatFields $flatFields,
+    ) {}
     /**
      * @return array{
      *     generated_at: string,
@@ -168,39 +171,24 @@ class ProductXmlExportService
         $this->writeScalar($writer, 'price_formatted', $payload['price_formatted'] ?? null);
         $this->writeScalar($writer, 'warranty', $payload['warranty'] ?? null);
         $this->writeScalar($writer, 'principal_stock', $payload['principal_stock'] ?? 0);
+
+        $categories = $payload['categories'] ?? [];
+        $attributes = $payload['attributes'] ?? [];
+        $dimensions = $this->flatFields->dimensions($attributes);
+
+        $this->writeScalar($writer, 'categories', $this->flatFields->categoriesText($categories));
+        $this->writeScalar($writer, 'width', $dimensions['width']);
+        $this->writeScalar($writer, 'height', $dimensions['height']);
+        $this->writeScalar($writer, 'weight', $dimensions['weight']);
+
         $this->writeCDataElement($writer, 'short_description', $payload['short_description'] ?? null);
         $this->writeCDataElement($writer, 'long_description', $payload['long_description'] ?? null);
         $this->writeCDataElement($writer, 'long_description_html', $payload['long_description_html'] ?? null);
 
-        $this->writeCategories($writer, $payload['categories'] ?? []);
-        $this->writeAttributes($writer, $payload['attributes'] ?? []);
+        $this->writeAttributes($writer, $this->flatFields->attributesForXml($attributes));
         $this->writeImages($writer, $payload['images'] ?? []);
         $this->writeStock($writer, $payload['stock'] ?? []);
         $this->writeLocations($writer, $payload['locations'] ?? []);
-
-        $writer->endElement();
-    }
-
-    /**
-     * @param  list<array{path: string, segments: list<string>, depth: int}>  $categories
-     */
-    private function writeCategories(XMLWriter $writer, array $categories): void
-    {
-        $writer->startElement('categories');
-
-        foreach ($categories as $category) {
-            $writer->startElement('category');
-            $this->writeScalar($writer, 'path', $category['path'] ?? null);
-            $this->writeScalar($writer, 'depth', $category['depth'] ?? null);
-
-            $writer->startElement('segments');
-            foreach ($category['segments'] ?? [] as $segment) {
-                $this->writeScalar($writer, 'segment', $segment);
-            }
-            $writer->endElement();
-
-            $writer->endElement();
-        }
 
         $writer->endElement();
     }
