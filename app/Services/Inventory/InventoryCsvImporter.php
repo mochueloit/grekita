@@ -95,7 +95,7 @@ class InventoryCsvImporter
             $parsed = $this->tryParseRow($row, $dataRowNumber, $skippedLogger, $phase);
 
             if ($parsed === null) {
-                if ($this->lastParseWasHardSkip()) {
+                if ($this->lastParseWasHardSkip) {
                     $stats['skipped']++;
                 }
 
@@ -330,7 +330,7 @@ class InventoryCsvImporter
             $parsed = $this->tryParseRow($row, $rowsScanned, $skippedLogger, $phase);
 
             if ($parsed === null) {
-                if ($this->lastParseWasHardSkip()) {
+                if ($this->lastParseWasHardSkip) {
                     $stats['skipped']++;
                 }
 
