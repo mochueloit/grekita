@@ -16,6 +16,7 @@ class Product extends Model
         'price_foreign',
         'price_currency',
         'warranty',
+        'principal_stock',
         'short_description',
         'long_description',
         'long_description_html',
@@ -26,7 +27,24 @@ class Product extends Model
         return [
             'price' => 'decimal:2',
             'price_foreign' => 'decimal:2',
+            'principal_stock' => 'integer',
         ];
+    }
+
+    /**
+     * Stock total en las 3 sedes (Puerto Ordaz + Lechería + Caracas).
+     */
+    public function principalStockTotal(): int
+    {
+        return (int) ($this->principal_stock ?? 0);
+    }
+
+    /**
+     * @return list<array{id: int, slug: string, name: string, stock: int, in_stock: bool, registered: bool}>
+     */
+    public function knownStoreStocks(): array
+    {
+        return app(\App\Services\Inventory\ProductStockService::class)->stocksForProduct($this);
     }
 
     public function categories(): BelongsToMany

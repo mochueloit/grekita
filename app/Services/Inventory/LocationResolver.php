@@ -21,6 +21,20 @@ class LocationResolver
         'tiendagrekaccs' => 'caracas',
     ];
 
+    public function resolveKnownStoreBySlug(string $slug): Location
+    {
+        foreach (self::KNOWN_ACCOUNTS as $config) {
+            if ($config['slug'] === $slug) {
+                return $this->resolveKnownLocation($config);
+            }
+        }
+
+        return Location::query()->firstOrCreate(
+            ['slug' => $slug],
+            ['name' => ucfirst(str_replace('-', ' ', $slug))],
+        );
+    }
+
     public function resolveFromCuentaMl(string $cuentaMl): Location
     {
         $accountId = $this->extractAccountId($cuentaMl);

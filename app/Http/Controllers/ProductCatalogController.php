@@ -81,9 +81,8 @@ class ProductCatalogController extends Controller
             'hasActiveFilters' => $hasActiveFilters,
             'stats' => [
                 'total' => Product::count(),
-                'in_stock' => Product::query()
-                    ->whereHas('locations', fn (Builder $query) => $query->where('location_product.stock', '>', 0))
-                    ->count(),
+                'principal_stock_units' => (int) Product::query()->sum('principal_stock'),
+                'in_stock' => Product::query()->where('principal_stock', '>', 0)->count(),
                 'different_stock' => Product::query()
                     ->whereRaw('(
                         SELECT COUNT(DISTINCT location_product.stock)

@@ -156,52 +156,51 @@
                 </section>
             @endif
 
+            <section class="rounded-2xl border border-indigo-200 bg-indigo-50 p-6 shadow-sm">
+                <h3 class="text-sm font-semibold uppercase tracking-wide text-indigo-700">Stock principal</h3>
+                <p class="mt-2 text-3xl font-bold text-indigo-900">{{ $product->principalStockTotal() }}</p>
+                <p class="mt-1 text-xs text-indigo-600">Suma de las 3 sedes (Puerto Ordaz + Lechería + Caracas)</p>
+            </section>
+
             <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Stock por sede</h3>
+                <p class="mt-1 text-xs text-slate-500">Todas las sedes se registran en BD; si no hay fila en el inventario, el stock queda en 0 hasta la próxima importación.</p>
 
                 <div class="mt-4 space-y-3">
-                    @php
-                        $sortedLocations = $product->locations->sortBy(
-                            fn ($location) => ($location->slug === $primaryLocationSlug ? '0' : '1').$location->name
-                        );
-                    @endphp
-                    @forelse ($sortedLocations as $location)
-                        @php($stock = (int) $location->pivot->stock)
-                        @php($isPrimary = $location->slug === $primaryLocationSlug)
+                    @foreach ($product->knownStoreStocks() as $store)
+                        @php($isPrimary = $store['slug'] === $primaryLocationSlug)
                         <div @class([
                             'flex items-center justify-between rounded-xl px-4 py-3',
                             'bg-indigo-50 ring-2 ring-indigo-200' => $isPrimary,
-                            'bg-emerald-50 ring-1 ring-emerald-200' => ! $isPrimary && $stock > 0,
-                            'bg-slate-50 ring-1 ring-slate-200' => ! $isPrimary && $stock <= 0,
+                            'bg-emerald-50 ring-1 ring-emerald-200' => ! $isPrimary && $store['stock'] > 0,
+                            'bg-slate-50 ring-1 ring-slate-200' => ! $isPrimary && $store['stock'] <= 0,
                         ])>
                             <div>
                                 <p @class([
                                     'text-sm font-medium',
                                     'text-indigo-900' => $isPrimary,
-                                    'text-emerald-900' => ! $isPrimary && $stock > 0,
-                                    'text-slate-600' => ! $isPrimary && $stock <= 0,
+                                    'text-emerald-900' => ! $isPrimary && $store['stock'] > 0,
+                                    'text-slate-600' => ! $isPrimary && $store['stock'] <= 0,
                                 ])>
-                                    {{ $location->name }}
+                                    {{ $store['name'] }}
                                     @if ($isPrimary)
                                         <span class="ml-1 text-xs font-normal text-indigo-600">(catálogo maestro)</span>
                                     @endif
                                 </p>
-                                <p class="text-xs text-slate-500">{{ $location->slug }}</p>
+                                <p class="text-xs text-slate-500">{{ $store['slug'] }}</p>
                             </div>
                             <div class="text-right">
                                 <p @class([
                                     'text-xl font-semibold',
-                                    'text-emerald-800' => $stock > 0,
-                                    'text-slate-400' => $stock <= 0,
-                                ])>{{ $stock }}</p>
-                                <p class="text-xs {{ $stock > 0 ? 'text-emerald-700' : 'text-slate-400' }}">
-                                    {{ $stock > 0 ? 'In Stock' : 'Sin stock' }}
+                                    'text-emerald-800' => $store['stock'] > 0,
+                                    'text-slate-400' => $store['stock'] <= 0,
+                                ])>{{ $store['stock'] }}</p>
+                                <p class="text-xs {{ $store['stock'] > 0 ? 'text-emerald-700' : 'text-slate-400' }}">
+                                    {{ $store['stock'] > 0 ? 'Con stock' : 'Registrado (0)' }}
                                 </p>
                             </div>
                         </div>
-                    @empty
-                        <p class="text-sm text-slate-400">Sin sedes asignadas.</p>
-                    @endforelse
+                    @endforeach
                 </div>
             </section>
 

@@ -9,6 +9,7 @@ use App\Services\Inventory\InventoryImportPhase;
 use App\Services\Inventory\InventoryImportProgress;
 use App\Services\Inventory\InventorySkippedRowExporter;
 use App\Services\Inventory\InventorySkippedRowLogger;
+use App\Services\Inventory\ProductStockService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use InvalidArgumentException;
@@ -60,6 +61,8 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
 
             $import->refresh();
 
+            $backfilled = app(ProductStockService::class)->backfillAllProducts();
+
             $import->update([
                 'status' => InventoryImport::STATUS_COMPLETED,
                 'stats' => $import->partial_stats,
@@ -82,6 +85,8 @@ class ProcessInventoryImportChunkJob implements ShouldQueue
                     $stats['images_queued'],
                 ));
             }
+
+            $progress->log("Stock principal y sedes (0 donde falte) sincronizados en {$backfilled} producto(s).");
 
             $progress->log(sprintf(
                 'Importación terminada — Fase 1: %d creados, %d actualizados · Fase 2: %d stock aplicado, %d sin producto · %d omitidas · %d imágenes en cola.',

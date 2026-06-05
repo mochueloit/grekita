@@ -26,6 +26,7 @@ class InventoryCsvImporter
         private readonly ProductAttributeSyncService $attributeSync,
         private readonly ProductImageDownloader $imageDownloader,
         private readonly ProductCategorySyncService $categorySync,
+        private readonly ProductStockService $stockService,
     ) {}
 
     public function prepareQueuedImport(InventoryImport $import): void
@@ -493,6 +494,8 @@ class InventoryCsvImporter
                     $progress->sync(['current_step' => 'Fase 1 — encolando imágenes '.$group['sku']]);
                 }
 
+                $this->stockService->ensureAllStorePivots($product);
+
                 $catalogStats = $this->syncCatalog($product, $metadata, $importId);
             } else {
                 if ($metadata['product'] !== []) {
@@ -508,6 +511,8 @@ class InventoryCsvImporter
                     $progress->sync(['current_step' => 'Fase 1 — SKU '.$group['sku']]);
                 }
 
+                $this->stockService->ensureAllStorePivots($product);
+
                 $catalogStats = $this->syncCatalog($product, $metadata, $importId);
             }
 
@@ -516,7 +521,7 @@ class InventoryCsvImporter
             $imagesFailed += $catalogStats['images_failed'];
 
             $location = $this->locationResolver->resolveFromCuentaMl($group['catalog']['cuenta_ml']);
-            $this->applyStock($product, $location->id, (int) $group['catalog']['stock']);
+            $this->stockService->addLocationStock($product, $location->id, (int) $group['catalog']['stock']);
 
             if ($progress !== null) {
                 $progress->sync([
@@ -599,7 +604,7 @@ class InventoryCsvImporter
             }
 
             $location = $this->locationResolver->resolveFromCuentaMl($group['cuenta_ml']);
-            $this->applyStock($product, $location->id, $group['stock']);
+            $this->stockService->addLocationStock($product, $location->id, $group['stock']);
             $stockApplied++;
         }
 
@@ -608,20 +613,6 @@ class InventoryCsvImporter
             'stock_skipped' => $stockSkipped,
             'skipped' => $skippedCount,
         ];
-    }
-
-    private function applyStock(Product $product, int $locationId, int $addedStock): void
-    {
-        if ($addedStock <= 0) {
-            return;
-        }
-
-        $existing = $product->locations()->where('locations.id', $locationId)->first();
-        $current = $existing !== null ? (int) $existing->pivot->stock : 0;
-
-        $product->locations()->syncWithoutDetaching([
-            $locationId => ['stock' => $current + $addedStock],
-        ]);
     }
 
     /**

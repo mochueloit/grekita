@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\Inventory\ProductStockService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -13,13 +14,16 @@ class ProductResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $stockService = app(ProductStockService::class);
+        $stockPayload = $stockService->apiStockPayload($this->resource);
+
         $locations = [];
 
-        foreach ($this->locations as $location) {
-            $stock = (int) $location->pivot->stock;
-            $locations[$location->name] = [
-                'stock' => $stock,
-                'in_stock' => $stock > 0,
+        foreach ($stockPayload['by_location'] as $row) {
+            $locations[$row['name']] = [
+                'slug' => $row['slug'],
+                'stock' => $row['stock'],
+                'in_stock' => $row['in_stock'],
             ];
         }
 
@@ -40,6 +44,8 @@ class ProductResource extends JsonResource
             'price_currency' => $this->price_currency,
             'price_formatted' => $this->formattedPrice(),
             'warranty' => $this->warranty,
+            'principal_stock' => $stockPayload['principal'],
+            'stock' => $stockPayload,
             'categories' => $this->formattedCategories(),
             'short_description' => $this->short_description,
             'long_description' => $this->long_description,

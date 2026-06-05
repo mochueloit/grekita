@@ -4,13 +4,18 @@
 @section('heading', 'Catálogo de productos')
 
 @section('content')
-    <div class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p class="text-sm text-slate-500">Total productos</p>
             <p class="mt-1 text-3xl font-semibold text-slate-900">{{ number_format($stats['total']) }}</p>
         </div>
+        <div class="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+            <p class="text-sm text-indigo-700">Unidades stock principal</p>
+            <p class="mt-1 text-3xl font-semibold text-indigo-900">{{ number_format($stats['principal_stock_units']) }}</p>
+            <p class="mt-1 text-xs text-indigo-600">Suma PO + Lechería + Caracas</p>
+        </div>
         <div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
-            <p class="text-sm text-emerald-700">Con stock en alguna sede</p>
+            <p class="text-sm text-emerald-700">Con stock principal &gt; 0</p>
             <p class="mt-1 text-3xl font-semibold text-emerald-900">{{ number_format($stats['in_stock']) }}</p>
         </div>
         <div class="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
@@ -173,32 +178,33 @@
                     @endif
 
                     <div class="mt-4 flex-1">
-                        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Stock por sede</p>
+                        <div class="mb-2 flex flex-wrap items-center gap-2">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Stock principal</p>
+                            <span @class([
+                                'inline-flex rounded-full px-3 py-1 text-xs font-bold',
+                                'bg-indigo-600 text-white' => $product->principalStockTotal() > 0,
+                                'bg-slate-200 text-slate-600' => $product->principalStockTotal() <= 0,
+                            ])>
+                                {{ $product->principalStockTotal() }} uds
+                            </span>
+                        </div>
                         <div class="flex flex-wrap gap-2">
-                            @php
-                                $sortedLocations = $product->locations->sortBy(
-                                    fn ($location) => ($location->slug === 'puerto-ordaz' ? '0' : '1').$location->name
-                                );
-                            @endphp
-                            @forelse ($sortedLocations as $location)
-                                @php($stock = (int) $location->pivot->stock)
-                                @php($isPrimary = $location->slug === 'puerto-ordaz')
-                                @php($isFilterHighlight = $locationId && (int) $location->id === (int) $locationId)
+                            @foreach ($product->knownStoreStocks() as $store)
+                                @php($isPrimary = $store['slug'] === 'puerto-ordaz')
+                                @php($isFilterHighlight = $locationId && (int) $store['id'] === (int) $locationId)
                                 <span @class([
                                     'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium',
-                                    'bg-indigo-50 text-indigo-900 ring-2 ring-indigo-300' => $isPrimary && $stock > 0,
-                                    'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' => $isPrimary && $stock <= 0,
-                                    'bg-emerald-50 text-emerald-800 ring-2 ring-emerald-400' => ! $isPrimary && $stock > 0 && $isFilterHighlight,
-                                    'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200' => ! $isPrimary && $stock > 0 && ! $isFilterHighlight,
-                                    'bg-slate-100 text-slate-500 ring-2 ring-slate-400' => ! $isPrimary && $stock <= 0 && $isFilterHighlight,
-                                    'bg-slate-100 text-slate-500 ring-1 ring-slate-200' => ! $isPrimary && $stock <= 0 && ! $isFilterHighlight,
+                                    'bg-indigo-50 text-indigo-900 ring-2 ring-indigo-300' => $isPrimary && $store['stock'] > 0,
+                                    'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' => $isPrimary && $store['stock'] <= 0,
+                                    'bg-emerald-50 text-emerald-800 ring-2 ring-emerald-400' => ! $isPrimary && $store['stock'] > 0 && $isFilterHighlight,
+                                    'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200' => ! $isPrimary && $store['stock'] > 0 && ! $isFilterHighlight,
+                                    'bg-slate-100 text-slate-500 ring-2 ring-slate-400' => ! $isPrimary && $store['stock'] <= 0 && $isFilterHighlight,
+                                    'bg-slate-100 text-slate-500 ring-1 ring-slate-200' => ! $isPrimary && $store['stock'] <= 0 && ! $isFilterHighlight,
                                 ])>
-                                    {{ $location->name }}:
-                                    <strong>{{ $stock }}</strong>
+                                    {{ $store['name'] }}:
+                                    <strong>{{ $store['stock'] }}</strong>
                                 </span>
-                            @empty
-                                <span class="text-sm text-slate-400">Sin sedes asignadas</span>
-                            @endforelse
+                            @endforeach
                         </div>
                     </div>
 
