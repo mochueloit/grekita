@@ -60,10 +60,7 @@ class InventoryProductRowParser
      */
     private function parseStock(array $row): int
     {
-        $associations = trim($this->headers->value($row, 'asociaciones') ?? '');
-        $quantity = (int) ($this->headers->value($row, 'cantidad') ?? 0);
-
-        return $this->associationParser->parseStock($associations, $quantity);
+        return max(0, (int) ($this->headers->value($row, 'cantidad') ?? 0));
     }
 
     /**

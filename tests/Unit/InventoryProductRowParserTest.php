@@ -53,6 +53,21 @@ class InventoryProductRowParserTest extends TestCase
         $this->assertSame(150000.0, $parsed['price']);
         $this->assertSame(40.0, $parsed['price_foreign']);
         $this->assertSame('USD', $parsed['price_currency']);
+        $this->assertSame(1, $parsed['stock']);
+    }
+
+    public function test_stock_uses_cantidad_column_not_asociaciones(): void
+    {
+        $headers = ['SKU', 'Título', 'Cuenta ML', 'Cantidad', 'Asociaciones'];
+        $resolver = new InventoryHeaderResolver($headers);
+        $parser = $this->makeParser($resolver);
+
+        $row = ['6098', 'Producto', 'Sede Puerto Ordaz (82385465)', '5', 'Cantidad: 99'];
+
+        $parsed = $parser->parse($row);
+
+        $this->assertNotNull($parsed);
+        $this->assertSame(5, $parsed['stock']);
     }
 
     private function makeParser(InventoryHeaderResolver $resolver): InventoryProductRowParser

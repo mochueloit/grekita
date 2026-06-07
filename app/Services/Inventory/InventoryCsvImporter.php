@@ -175,9 +175,16 @@ class InventoryCsvImporter
             'current_step' => InventoryImportPhase::label(InventoryImportPhase::STOCK),
         ]);
 
+        $resetCount = $this->stockService->resetSecondaryStoreStocks();
+
         $progress = new InventoryImportProgress($import->id);
         $catalogRows = $checkpoint['catalog_rows'] ?? '?';
         $stockRows = $checkpoint['stock_rows'] ?? '?';
+
+        $progress->log(sprintf(
+            'Fase 2: stock de Lechería y Caracas reiniciado a 0 en %d registro(s) antes de aplicar el archivo.',
+            $resetCount,
+        ));
 
         $progress->log(sprintf(
             'Fase 1 terminada: %d productos creados, %d actualizados, %d imágenes en cola.',
@@ -272,6 +279,17 @@ class InventoryCsvImporter
         foreach ([InventoryImportPhase::CATALOG, InventoryImportPhase::STOCK] as $phase) {
             if ($progress !== null) {
                 $progress->log(InventoryImportPhase::label($phase));
+            }
+
+            if ($phase === InventoryImportPhase::STOCK) {
+                $resetCount = $this->stockService->resetSecondaryStoreStocks();
+
+                if ($progress !== null) {
+                    $progress->log(sprintf(
+                        'Fase 2: stock de Lechería y Caracas reiniciado a 0 en %d registro(s).',
+                        $resetCount,
+                    ));
+                }
             }
 
             $phaseStats = $this->importPhaseFromFile($filePath, $phase, $progress, $import);
@@ -521,7 +539,7 @@ class InventoryCsvImporter
             $imagesFailed += $catalogStats['images_failed'];
 
             $location = $this->locationResolver->resolveFromCuentaMl($group['catalog']['cuenta_ml']);
-            $this->stockService->addLocationStock($product, $location->id, (int) $group['catalog']['stock']);
+            $this->stockService->setLocationStock($product, $location->id, (int) $group['catalog']['stock']);
 
             if ($progress !== null) {
                 $progress->sync([
@@ -604,7 +622,7 @@ class InventoryCsvImporter
             }
 
             $location = $this->locationResolver->resolveFromCuentaMl($group['cuenta_ml']);
-            $this->stockService->addLocationStock($product, $location->id, $group['stock']);
+            $this->stockService->setLocationStock($product, $location->id, $group['stock']);
             $stockApplied++;
         }
 
@@ -652,7 +670,7 @@ class InventoryCsvImporter
         foreach ($chunk as $row) {
             $sku = $row['sku'];
 
-            if (! isset($grouped[$sku]) || (int) ($row['stock'] ?? 0) > (int) ($grouped[$sku]['catalog']['stock'] ?? 0)) {
+            if (! isset($grouped[$sku])) {
                 $grouped[$sku] = [
                     'sku' => $sku,
                     'catalog' => $row,

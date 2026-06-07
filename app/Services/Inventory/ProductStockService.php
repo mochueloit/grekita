@@ -5,6 +5,7 @@ namespace App\Services\Inventory;
 use App\Models\Location;
 use App\Models\Product;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class ProductStockService
 {
@@ -73,24 +74,45 @@ class ProductStockService
     }
 
     /**
-     * Registra sedes faltantes, suma stock importado y recalcula stock principal.
+     * Registra sedes faltantes, asigna stock absoluto (incluye 0) y recalcula stock principal.
      */
-    public function addLocationStock(Product $product, int $locationId, int $addedStock): void
+    public function setLocationStock(Product $product, int $locationId, int $stock): void
     {
         $this->ensureAllStorePivots($product);
 
-        if ($addedStock > 0) {
-            $existing = $product->locations()->where('locations.id', $locationId)->first();
-            $current = $existing !== null ? (int) $existing->pivot->stock : 0;
+        $product->locations()->syncWithoutDetaching([
+            $locationId => ['stock' => max(0, $stock)],
+        ]);
 
-            $product->locations()->syncWithoutDetaching([
-                $locationId => ['stock' => $current + $addedStock],
-            ]);
+        $product->unsetRelation('locations');
+        $this->refreshPrincipalStock($product);
+    }
 
-            $product->unsetRelation('locations');
+    /**
+     * Al iniciar fase 2: Lechería y Caracas en 0; Puerto Ordaz conserva su stock de fase 1.
+     */
+    public function resetSecondaryStoreStocks(): int
+    {
+        $secondaryIds = $this->knownLocations()
+            ->reject(fn (Location $location): bool => $location->slug === LocationResolver::PRIMARY_LOCATION_SLUG)
+            ->pluck('id')
+            ->all();
+
+        if ($secondaryIds === []) {
+            return 0;
         }
 
-        $this->refreshPrincipalStock($product);
+        $affected = DB::table('location_product')
+            ->whereIn('location_id', $secondaryIds)
+            ->update(['stock' => 0]);
+
+        Product::query()->orderBy('id')->chunkById(100, function ($products): void {
+            foreach ($products as $product) {
+                $this->refreshPrincipalStock($product);
+            }
+        });
+
+        return $affected;
     }
 
     /**
