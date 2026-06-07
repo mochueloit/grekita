@@ -175,6 +175,7 @@ class ProductXmlExportService
         $dimensions = $this->flatFields->dimensions($attributes);
         $imageUrls = $this->flatFields->localImageUrls($product);
         $stockRows = $this->stockService->stocksForProduct($product);
+        $stockGeneral = array_sum(array_column($stockRows, 'stock'));
 
         $writer->startElement('product');
 
@@ -188,6 +189,7 @@ class ProductXmlExportService
         $this->writeRequiredScalar($writer, 'price_formatted', $product->formattedPrice());
         $this->writeRequiredScalar($writer, 'warranty', $product->warranty);
         $this->writeRequiredScalar($writer, 'principal_stock', $product->principalStockTotal());
+        $this->writeRequiredScalar($writer, 'stock_general', $stockGeneral);
 
         $this->writeRequiredCData($writer, 'categories', $this->flatFields->categoriesTextFromProduct($product));
         $this->writeRequiredScalar($writer, 'width', $dimensions['width']);

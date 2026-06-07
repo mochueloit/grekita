@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\AttributeDefinition;
 use App\Models\Category;
+use App\Models\Location;
 use App\Models\Product;
 use App\Models\ProductImage;
 use App\Services\Export\ProductXmlExportService;
@@ -72,5 +73,47 @@ class ProductXmlExportServiceTest extends TestCase
         $this->assertStringContainsString('<images_urls>', $xml);
         $this->assertStringContainsString('/storage/products/x.jpg', $xml);
         $this->assertStringNotContainsString('ml.example', $xml);
+    }
+
+    public function test_stock_general_is_sum_of_three_locations(): void
+    {
+        $po = Location::query()->create(['name' => 'Sede Puerto Ordaz', 'slug' => 'puerto-ordaz']);
+        $lecheria = Location::query()->create(['name' => 'Sede Lechería', 'slug' => 'lecheria']);
+        $caracas = Location::query()->create(['name' => 'Sede Caracas', 'slug' => 'caracas']);
+
+        $product = Product::query()->create([
+            'sku' => '6098',
+            'name' => 'Producto stock',
+            'principal_stock' => 7,
+        ]);
+
+        $product->locations()->sync([
+            $po->id => ['stock' => 5],
+            $lecheria->id => ['stock' => 2],
+            $caracas->id => ['stock' => 0],
+        ]);
+
+        $result = app(ProductXmlExportService::class)->generate('test');
+        $xml = Storage::disk('local')->get($result['relative_path']);
+
+        $this->assertStringContainsString('<stock_general>7</stock_general>', $xml);
+    }
+
+    public function test_stock_general_is_zero_when_all_locations_empty(): void
+    {
+        Location::query()->create(['name' => 'Sede Puerto Ordaz', 'slug' => 'puerto-ordaz']);
+        Location::query()->create(['name' => 'Sede Lechería', 'slug' => 'lecheria']);
+        Location::query()->create(['name' => 'Sede Caracas', 'slug' => 'caracas']);
+
+        Product::query()->create([
+            'sku' => 'SIN-STOCK',
+            'name' => 'Sin stock',
+            'principal_stock' => 0,
+        ]);
+
+        $result = app(ProductXmlExportService::class)->generate('test');
+        $xml = Storage::disk('local')->get($result['relative_path']);
+
+        $this->assertStringContainsString('<stock_general>0</stock_general>', $xml);
     }
 }
