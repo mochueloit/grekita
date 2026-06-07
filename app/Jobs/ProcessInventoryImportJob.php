@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\InventoryImport;
 use App\Services\Inventory\InventoryCsvImporter;
+use App\Services\Inventory\InventoryImportNotifier;
 use App\Services\Inventory\InventoryImportProgress;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -42,6 +43,9 @@ class ProcessInventoryImportJob implements ShouldQueue
         try {
             $importer->prepareQueuedImport($import);
             $progress->log('Archivo validado. Encolando fase 1 (catálogo Puerto Ordaz)…');
+
+            app(InventoryImportNotifier::class)->notifyStarted($import->fresh() ?? $import);
+
             ProcessInventoryImportChunkJob::dispatch($this->importId, 0)->afterCommit();
         } catch (InvalidArgumentException $exception) {
             $this->markFailed($import, $exception->getMessage());

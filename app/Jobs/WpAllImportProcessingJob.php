@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\InventoryImport;
+use App\Services\Inventory\InventoryImportNotifier;
 use App\Services\Inventory\InventoryImportProgress;
 use App\Services\WordPress\WpAllImportClient;
 use App\Services\WordPress\WpAllImportSyncLogger;
@@ -138,5 +139,9 @@ class WpAllImportProcessingJob implements ShouldQueue
 
         $progress->log('Sincronización WordPress finalizada. '.$message);
         $wpLog->log('FIN — '.$message, $level);
+
+        $notifier = app(InventoryImportNotifier::class);
+        $import = $import->fresh() ?? $import;
+        $notifier->notifyCompleted($import, $notifier->buildCompletionSummary($import));
     }
 }

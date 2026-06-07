@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\InventoryImport;
 use App\Services\Export\ProductXmlExportService;
 use App\Services\Inventory\InventoryImageDownloadLogger;
+use App\Services\Inventory\InventoryImportNotifier;
 use App\Services\Inventory\InventoryImportProgress;
 use App\Services\WordPress\WpAllImportClient;
 use App\Services\WordPress\WpAllImportSyncLogger;
@@ -116,6 +117,10 @@ class PostInventorySyncJob implements ShouldQueue
             ]);
             $progress->log('WP All Import deshabilitado en configuración; solo se generó el XML.');
             $wpLog->log('WP All Import deshabilitado — pipeline finalizado tras XML.');
+
+            $notifier = app(InventoryImportNotifier::class);
+            $fresh = $import->fresh() ?? $import;
+            $notifier->notifyCompleted($fresh, $notifier->buildCompletionSummary($fresh));
 
             return;
         }

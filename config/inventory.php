@@ -35,4 +35,18 @@ return [
 
     /** Timeout del proceso queue:work (segundos). Debe ser >= timeout del job más largo. */
     'worker_timeout' => (int) env('INVENTORY_WORKER_TIMEOUT', 120),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Avisos por correo
+    |--------------------------------------------------------------------------
+    | INVENTORY_NOTIFY_EMAILS: lista separada por comas
+    */
+    'notify_enabled' => (bool) env('INVENTORY_NOTIFY_ENABLED', false),
+
+    'notify_emails' => env('INVENTORY_NOTIFY_EMAILS', ''),
+
+    'notify_on_start' => (bool) env('INVENTORY_NOTIFY_ON_START', true),
+
+    'notify_on_complete' => (bool) env('INVENTORY_NOTIFY_ON_COMPLETE', true),
 ];
