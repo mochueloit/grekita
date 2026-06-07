@@ -43,4 +43,10 @@ Route::middleware('auth')->group(function (): void {
 
     Route::get('/inventory/import/{import}/images/log/download', [InventoryImportController::class, 'downloadImageLog'])
         ->name('inventory.import.images.log.download');
+
+    Route::get('/inventory/import/{import}/wp/log', [InventoryImportController::class, 'wpSyncLog'])
+        ->name('inventory.import.wp.log');
+
+    Route::get('/inventory/import/{import}/wp/log/download', [InventoryImportController::class, 'downloadWpSyncLog'])
+        ->name('inventory.import.wp.log.download');
 });

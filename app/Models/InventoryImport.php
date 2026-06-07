@@ -30,6 +30,7 @@ class InventoryImport extends Model
         'skipped_rows_path',
         'skipped_rows_csv_path',
         'image_download_log_path',
+        'wp_sync_log_path',
         'log_entries',
         'error_message',
         'started_at',

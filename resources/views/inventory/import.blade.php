@@ -121,6 +121,50 @@
                     </div>
                 </div>
 
+                <div id="wp-log-panel" class="collapsible-panel mt-6 hidden rounded-xl border border-violet-200 bg-violet-50" data-default-expanded="false">
+                    <button type="button" class="collapsible-panel-toggle flex w-full items-center justify-between gap-3 px-5 py-4 text-left" aria-expanded="false">
+                        <div class="min-w-0">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-violet-700">Sincronización WordPress (WP All Import)</p>
+                            <p id="wp-log-summary" class="mt-1 truncate text-sm text-violet-900"></p>
+                        </div>
+                        <span class="flex shrink-0 items-center gap-2">
+                            <a
+                                id="wp-log-download"
+                                href="#"
+                                class="hidden inline-flex rounded-lg bg-violet-700 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-800"
+                                onclick="event.stopPropagation()"
+                            >
+                                Descargar .log
+                            </a>
+                            <svg class="collapsible-panel-chevron h-4 w-4 text-violet-500 transition-transform" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+                        </span>
+                    </button>
+                    <div class="collapsible-panel-body hidden border-t border-violet-200 px-5 pb-5">
+                        <div class="mb-2 flex justify-end">
+                            <button type="button" class="collapsible-panel-resize rounded border border-violet-200 bg-white px-2 py-1 text-xs text-violet-800 hover:bg-violet-100">Ampliar</button>
+                        </div>
+                        <div id="wp-log-last-message" class="mb-3 hidden rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm text-violet-900"></div>
+                        <div class="mb-3 overflow-hidden rounded-lg border border-violet-200 bg-white">
+                            <table class="min-w-full text-xs">
+                                <thead class="bg-violet-50">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left font-semibold text-violet-800">Hora</th>
+                                        <th class="px-3 py-2 text-left font-semibold text-violet-800">Acción</th>
+                                        <th class="px-3 py-2 text-left font-semibold text-violet-800">Status</th>
+                                        <th class="px-3 py-2 text-left font-semibold text-violet-800">Mensaje WP</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wp-log-history-body" class="divide-y divide-violet-100">
+                                    <tr><td colspan="4" class="px-3 py-2 text-slate-500">Sin respuestas aún.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div id="wp-log-content" class="collapsible-panel-scroll max-h-36 overflow-y-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-violet-300">
+                            <p class="text-slate-500">Cargando log WordPress…</p>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="image-log-panel" class="collapsible-panel mt-6 hidden rounded-xl border border-slate-200 bg-slate-50" data-default-expanded="false">
                     <button type="button" class="collapsible-panel-toggle flex w-full items-center justify-between gap-3 px-5 py-4 text-left" aria-expanded="false">
                         <div class="min-w-0">
@@ -182,6 +226,9 @@
                                             @if ($import->image_download_log_path)
                                                 · <a href="{{ route('inventory.import.images.log.download', $import) }}" class="text-slate-600 hover:text-slate-900">Log imágenes</a>
                                             @endif
+                                            @if ($import->wp_sync_log_path)
+                                                · <a href="{{ route('inventory.import.wp.log.download', $import) }}" class="text-violet-700 hover:text-violet-900">Log WordPress</a>
+                                            @endif
                                             @if ($import->skipped_rows_csv_path)
                                                 · <a href="{{ route('inventory.import.skipped.download', $import) }}" class="text-amber-700 hover:text-amber-900">CSV omitidas</a>
                                             @endif
@@ -205,6 +252,7 @@
                     <li>Las imágenes se <strong>encolan</strong> al importar y se descargan despacio en cola aparte (~3 s entre cada una).</li>
                     <li>Las filas omitidas se guardan en CSV descargable junto a cada importación procesada.</li>
                     <li>La descarga de imágenes genera un <strong>.log</strong> persistente consultable desde importaciones completadas.</li>
+                    <li>Al terminar inventario + imágenes + XML se ejecuta <strong>WP All Import</strong> (trigger una vez, processing cada 3 min mientras API status=200).</li>
                 </ul>
             </div>
         </div>
@@ -236,13 +284,21 @@
             const imageLogContent = document.getElementById('image-log-content');
             const imageLogDownload = document.getElementById('image-log-download');
             const imageLogTruncated = document.getElementById('image-log-truncated');
+            const wpLogPanel = document.getElementById('wp-log-panel');
+            const wpLogSummary = document.getElementById('wp-log-summary');
+            const wpLogContent = document.getElementById('wp-log-content');
+            const wpLogDownload = document.getElementById('wp-log-download');
+            const wpLogLastMessage = document.getElementById('wp-log-last-message');
+            const wpLogHistoryBody = document.getElementById('wp-log-history-body');
             const statusUrlTemplate = @json(route('inventory.import.status', ['import' => '__ID__']));
             const skippedUrlTemplate = @json(route('inventory.import.skipped', ['import' => '__ID__']));
             const imageLogUrlTemplate = @json(route('inventory.import.images.log', ['import' => '__ID__']));
+            const wpLogUrlTemplate = @json(route('inventory.import.wp.log', ['import' => '__ID__']));
             const activeImportId = @json($activeImportId);
             let pollTimer = null;
             let lastLogLength = 0;
             let lastImageLogLength = 0;
+            let lastWpLogLength = 0;
             const IMAGE_LOG_DISPLAY_LINES = 80;
 
             const scrollHeights = {
@@ -287,6 +343,9 @@
                         if (expanded && panel.id === 'progress-log-panel' && progressLogCache.length > 0) {
                             renderProgressLogLines(progressLogCache);
                         }
+                        if (expanded && panel.id === 'wp-log-panel' && wpLogLinesCache.length > 0) {
+                            renderWpLogLines(wpLogLinesCache);
+                        }
                     });
 
                     resizeBtn?.addEventListener('click', (event) => {
@@ -314,7 +373,125 @@
             }
 
             let imageLogLinesCache = [];
+            let wpLogLinesCache = [];
             let progressLogCache = [];
+
+            function wpLogUrl(id) {
+                return wpLogUrlTemplate.replace('__ID__', id);
+            }
+
+            function renderWpLogLines(lines) {
+                wpLogContent.innerHTML = lines.map(line => {
+                    const isError = line.includes('[ERROR]') || line.includes('[WARN]');
+                    const isOk = line.includes('FIN —') || line.includes('API status 200');
+                    const color = isError ? 'text-amber-300' : (isOk ? 'text-emerald-400' : 'text-violet-300');
+                    return `<div class="${color}">${line}</div>`;
+                }).join('');
+                wpLogContent.scrollTop = wpLogContent.scrollHeight;
+            }
+
+            async function loadWpSyncLog(importData) {
+                const wpSync = importData.wp_sync ?? {};
+                const showPanel = wpSync.enabled || importData.wp_sync_log_download_url || importData.status === 'completed';
+
+                if (!showPanel) {
+                    wpLogPanel.classList.add('hidden');
+                    return;
+                }
+
+                wpLogPanel.classList.remove('hidden');
+
+                if (importData.wp_sync_log_download_url) {
+                    wpLogDownload.href = importData.wp_sync_log_download_url;
+                    wpLogDownload.classList.remove('hidden');
+                } else {
+                    wpLogDownload.classList.add('hidden');
+                }
+
+                const phaseLabel = {
+                    waiting: 'En espera',
+                    waiting_images: 'Esperando imágenes',
+                    exporting_xml: 'Generando XML',
+                    triggering: 'Activando importación',
+                    processing: 'Procesando en WordPress',
+                    completed: 'Completado',
+                    idle: 'Inactivo',
+                };
+
+                const phase = phaseLabel[wpSync.phase] ?? (wpSync.phase || 'Pendiente');
+                const statusSuffix = wpSync.finished
+                    ? ' — terminado'
+                    : (wpSync.phase && wpSync.phase !== 'idle' ? ' — en curso' : '');
+
+                if (wpSync.last_message) {
+                    wpLogLastMessage.textContent = wpSync.last_message;
+                    wpLogLastMessage.classList.remove('hidden');
+                } else {
+                    wpLogLastMessage.classList.add('hidden');
+                }
+
+                wpLogSummary.textContent = wpSync.last_api_status != null
+                    ? `${phase} · API ${wpSync.last_api_status}${statusSuffix}`
+                    : `${phase}${statusSuffix}`;
+
+                try {
+                    const response = await fetch(wpLogUrl(importData.id), {
+                        headers: { 'Accept': 'application/json' },
+                    });
+
+                    if (!response.ok) {
+                        wpLogContent.innerHTML = '<p class="text-slate-500">Aún no hay actividad de WordPress.</p>';
+                        return;
+                    }
+
+                    const payload = await response.json();
+
+                    if (payload.history && payload.history.length > 0) {
+                        const rows = payload.history.slice(-40);
+                        wpLogHistoryBody.innerHTML = rows.map(row => `
+                            <tr>
+                                <td class="px-3 py-2 text-slate-500">${row.at ?? '—'}</td>
+                                <td class="px-3 py-2 font-medium text-violet-900">${row.action ?? '—'}${row.attempt ? ' #' + row.attempt : ''}</td>
+                                <td class="px-3 py-2 ${row.api_status === 200 ? 'text-emerald-700' : 'text-amber-700'}">${row.api_status ?? '—'}</td>
+                                <td class="px-3 py-2 text-slate-800">${row.message ?? '—'}</td>
+                            </tr>
+                        `).join('');
+                    }
+
+                    if (payload.state?.last_message) {
+                        wpLogLastMessage.textContent = payload.state.last_message;
+                        wpLogLastMessage.classList.remove('hidden');
+                    }
+
+                    if (!payload.lines || payload.lines.length === 0) {
+                        wpLogLinesCache = [];
+                        if (isPanelExpanded('wp-log-panel')) {
+                            wpLogContent.innerHTML = '<p class="text-slate-500">Esperando pipeline WordPress…</p>';
+                        }
+                        lastWpLogLength = 0;
+                        return;
+                    }
+
+                    if (payload.lines.length === lastWpLogLength) {
+                        return;
+                    }
+
+                    lastWpLogLength = payload.lines.length;
+                    wpLogLinesCache = payload.lines;
+
+                    if (isPanelExpanded('wp-log-panel')) {
+                        renderWpLogLines(wpLogLinesCache);
+                    }
+                } catch (error) {
+                    wpLogContent.innerHTML = '<p class="text-slate-500">No se pudo cargar el log de WordPress.</p>';
+                }
+            }
+
+            function isWpSyncActive(importData) {
+                const wpSync = importData.wp_sync ?? {};
+                return wpSync.enabled === true && wpSync.finished !== true
+                    && ['waiting', 'waiting_images', 'exporting_xml', 'triggering', 'processing'].includes(wpSync.phase);
+            }
 
             function renderImageLogLines(lines) {
                 const displayLines = lines.slice(-IMAGE_LOG_DISPLAY_LINES);
@@ -531,8 +708,17 @@
                     }
                 }
 
+                if (importData.wp_sync) {
+                    const wp = importData.wp_sync;
+                    if (wp.enabled && (wp.phase === 'processing' || wp.phase === 'triggering')) {
+                        progressStep.textContent = (progressStep.textContent ? progressStep.textContent + ' · ' : '')
+                            + `WordPress: ${wp.phase} (API ${wp.last_api_status ?? '…'})`;
+                    }
+                }
+
                 renderLog(importData.log_entries);
                 loadImageLog(importData);
+                loadWpSyncLog(importData);
 
                 progressError.classList.add('hidden');
                 progressStats.classList.add('hidden');
@@ -567,11 +753,15 @@
                     submitBtn.textContent = 'Subir archivo';
 
                     const imgPending = ((importData.image_downloads?.pending ?? 0) + (importData.image_downloads?.downloading ?? 0));
-                    if (imgPending === 0) {
+                    const wpActive = isWpSyncActive(importData);
+
+                    if (imgPending === 0 && !wpActive) {
                         clearInterval(pollTimer);
-                        showAlert('Importación completada correctamente.', 'success');
-                    } else {
-                        showAlert('Productos importados. Las imágenes siguen descargándose en segundo plano.', 'success');
+                        showAlert('Importación y sincronización WordPress completadas.', 'success');
+                    } else if (imgPending > 0) {
+                        showAlert('Productos importados. Imágenes y/o WordPress siguen en segundo plano.', 'success');
+                    } else if (wpActive) {
+                        showAlert('Inventario listo. Sincronización WordPress en curso…', 'success');
                     }
                     return;
                 }
@@ -596,7 +786,7 @@
                     const img = payload.import.image_downloads ?? {};
                     const imgPending = (img.pending ?? 0) + (img.downloading ?? 0);
 
-                    if (payload.import.is_finished && imgPending === 0) {
+                    if (payload.import.is_finished && imgPending === 0 && !isWpSyncActive(payload.import)) {
                         clearInterval(pollTimer);
                     }
                 } catch (error) {

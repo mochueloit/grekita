@@ -26,7 +26,9 @@ class InventoryQueueInfoCommand extends Command
         $this->components->twoColumnDetail('Jobs en cola <comment>default</comment>', 'Importación CSV/Excel');
         $this->line('    • ProcessInventoryImportJob — prepara archivo y encadena lotes');
         $this->line('    • ProcessInventoryImportChunkJob — fase 1 (PO catálogo) luego fase 2 (stock otras sedes), ~'.config('inventory.rows_per_job', 25).' filas/job');
-        $this->line('    • ExportProductsXmlJob — XML WP All Import tras importación o POST /api/products/export-xml');
+        $this->line('    • PostInventorySyncJob — imágenes + XML + WP All Import trigger');
+        $this->line('    • WpAllImportProcessingJob — polling processing cada '.config('wp_all_import.processing_interval_seconds', 180).' s');
+        $this->line('    • ExportProductsXmlJob — XML manual (POST /api/products/export-xml)');
         $this->newLine();
 
         $this->components->twoColumnDetail('Jobs en cola <comment>images</comment>', 'Descarga de imágenes (lenta)');

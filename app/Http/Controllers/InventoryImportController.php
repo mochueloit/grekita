@@ -7,6 +7,7 @@ use App\Models\InventoryImport;
 use App\Services\Inventory\InventoryImageDownloadLogger;
 use App\Services\Inventory\InventorySkippedRowExporter;
 use App\Services\Inventory\InventorySkippedRowLogger;
+use App\Services\WordPress\WpAllImportSyncLogger;
 use App\Services\Inventory\QueueWorkerStarter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -130,6 +131,36 @@ class InventoryImportController extends Controller
         ]);
     }
 
+    public function wpSyncLog(InventoryImport $import): JsonResponse
+    {
+        $logger = new WpAllImportSyncLogger($import->id);
+
+        return response()->json([
+            'import_id' => $import->id,
+            'state' => $logger->state(),
+            'history' => $logger->history(),
+            'lines' => $logger->lines(200),
+            'download_url' => $logger->exists()
+                ? route('inventory.import.wp.log.download', $import)
+                : null,
+        ]);
+    }
+
+    public function downloadWpSyncLog(InventoryImport $import): StreamedResponse|BinaryFileResponse
+    {
+        $logger = new WpAllImportSyncLogger($import->id);
+
+        if (! $logger->exists()) {
+            abort(404, 'No hay log de sincronización WordPress para esta importación.');
+        }
+
+        $filename = sprintf('wordpress_import_%d_%s.log', $import->id, $import->completed_at?->format('Y-m-d_His') ?? now()->format('Y-m-d_His'));
+
+        return Storage::disk(self::DISK)->download($logger->relativePath(), $filename, [
+            'Content-Type' => 'text/plain; charset=UTF-8',
+        ]);
+    }
+
     public function downloadImageLog(InventoryImport $import): StreamedResponse|BinaryFileResponse
     {
         $logger = new InventoryImageDownloadLogger($import->id);
@@ -188,6 +219,11 @@ class InventoryImportController extends Controller
                 ? route('inventory.import.images.log.download', $import)
                 : null,
             'image_downloads' => $this->imageDownloadStatsForImport($import->id),
+            'wp_sync' => (new WpAllImportSyncLogger($import->id))->state(),
+            'wp_sync_log_url' => route('inventory.import.wp.log', $import),
+            'wp_sync_log_download_url' => (new WpAllImportSyncLogger($import->id))->exists()
+                ? route('inventory.import.wp.log.download', $import)
+                : null,
         ];
     }
 
