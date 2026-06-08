@@ -15,14 +15,16 @@ class WpAllImportProcessingJob implements ShouldQueue
 {
     use Queueable;
 
-    public int $timeout = 180;
+    public int $timeout = 300;
 
     public int $tries = 1;
 
     public function __construct(
         public readonly int $importId,
         public readonly int $attempt = 1,
-    ) {}
+    ) {
+        $this->timeout = (int) config('wp_all_import.http_timeout_seconds', 120) + 120;
+    }
 
     public function handle(WpAllImportClient $wpClient): void
     {
@@ -82,12 +84,36 @@ class WpAllImportProcessingJob implements ShouldQueue
         ));
 
         if ($response['should_continue']) {
-            $interval = (int) config('wp_all_import.processing_interval_seconds', 180);
-            $progress->log("WordPress sigue procesando. Próximo intento en {$interval} s.");
-            $wpLog->log("Continúa (API 200). Próximo processing en {$interval} s.");
+            $this->scheduleNextProcessing(
+                $progress,
+                $wpLog,
+                (int) config('wp_all_import.processing_interval_seconds', 180),
+                'WordPress sigue procesando. Próximo intento en %d s.',
+                'Continúa (API 200). Próximo processing en %d s.',
+            );
 
-            self::dispatch($this->importId, $this->attempt + 1)
-                ->delay(now()->addSeconds($interval));
+            return;
+        }
+
+        if ($response['should_retry'] ?? false) {
+            $retryInterval = (int) config('wp_all_import.processing_retry_interval_seconds', 90);
+            $progress->log(sprintf(
+                'Timeout o error de conexión con WordPress (intento #%d). No se da por terminado. Reintento en %d s.',
+                $this->attempt,
+                $retryInterval,
+            ));
+            $wpLog->log(
+                sprintf('Reintento #%d — error transitorio: %s', $this->attempt, $response['message']),
+                'WARN',
+            );
+
+            $this->scheduleNextProcessing(
+                $progress,
+                $wpLog,
+                $retryInterval,
+                null,
+                null,
+            );
 
             return;
         }
@@ -103,6 +129,25 @@ class WpAllImportProcessingJob implements ShouldQueue
             ),
             'INFO',
         );
+    }
+
+    private function scheduleNextProcessing(
+        InventoryImportProgress $progress,
+        WpAllImportSyncLogger $wpLog,
+        int $intervalSeconds,
+        ?string $progressMessage,
+        ?string $wpLogMessage,
+    ): void {
+        if ($progressMessage !== null) {
+            $progress->log(sprintf($progressMessage, $intervalSeconds));
+        }
+
+        if ($wpLogMessage !== null) {
+            $wpLog->log(sprintf($wpLogMessage, $intervalSeconds));
+        }
+
+        self::dispatch($this->importId, $this->attempt + 1)
+            ->delay(now()->addSeconds($intervalSeconds));
     }
 
     public function failed(?Throwable $exception): void

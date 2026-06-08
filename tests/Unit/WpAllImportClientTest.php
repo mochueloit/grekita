@@ -56,4 +56,52 @@ class WpAllImportClientTest extends TestCase
 
         $this->assertSame('19', $client->resolveImportId($import));
     }
+
+    public function test_curl_timeout_should_retry_instead_of_finish(): void
+    {
+        $client = new WpAllImportClient;
+
+        $this->assertTrue($client->shouldRetryAfterFailure([
+            'should_continue' => false,
+            'http_status' => 0,
+            'api_status' => null,
+            'message' => 'cURL error 28: Operation timed out after 120002 milliseconds with 0 bytes received',
+        ]));
+    }
+
+    public function test_api_200_still_processing_is_not_retryable_failure(): void
+    {
+        $client = new WpAllImportClient;
+
+        $this->assertFalse($client->shouldRetryAfterFailure([
+            'should_continue' => true,
+            'http_status' => 200,
+            'api_status' => 200,
+            'message' => 'Processing',
+        ]));
+    }
+
+    public function test_http_504_gateway_timeout_is_retryable(): void
+    {
+        $client = new WpAllImportClient;
+
+        $this->assertTrue($client->shouldRetryAfterFailure([
+            'should_continue' => false,
+            'http_status' => 504,
+            'api_status' => null,
+            'message' => '504 Gateway Time-out',
+        ]));
+    }
+
+    public function test_import_finished_with_non_retryable_api_status(): void
+    {
+        $client = new WpAllImportClient;
+
+        $this->assertFalse($client->shouldRetryAfterFailure([
+            'should_continue' => false,
+            'http_status' => 200,
+            'api_status' => 403,
+            'message' => 'Import complete',
+        ]));
+    }
 }

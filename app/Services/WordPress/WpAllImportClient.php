@@ -50,6 +50,39 @@ class WpAllImportClient
     }
 
     /**
+     * @param  array{
+     *     should_continue?: bool,
+     *     http_status?: int,
+     *     api_status?: int|null,
+     *     message?: string
+     * }  $response
+     */
+    public function shouldRetryAfterFailure(array $response): bool
+    {
+        if (($response['should_continue'] ?? false) === true) {
+            return false;
+        }
+
+        $httpStatus = (int) ($response['http_status'] ?? 0);
+        $message = strtolower((string) ($response['message'] ?? ''));
+
+        if (in_array($httpStatus, [408, 429, 502, 503, 504], true)) {
+            return true;
+        }
+
+        if ($httpStatus === 0) {
+            return str_contains($message, 'timed out')
+                || str_contains($message, 'curl error 28')
+                || str_contains($message, 'connection refused')
+                || str_contains($message, 'could not resolve')
+                || str_contains($message, 'failed to connect')
+                || str_contains($message, 'operation timed out');
+        }
+
+        return false;
+    }
+
+    /**
      * @return array{
      *     url: string,
      *     action: string,
@@ -57,7 +90,8 @@ class WpAllImportClient
      *     api_status: int|null,
      *     message: string,
      *     body: string,
-     *     should_continue: bool
+     *     should_continue: bool,
+     *     should_retry: bool
      * }
      */
     public function call(string $action, ?InventoryImport $import = null): array
@@ -70,7 +104,7 @@ class WpAllImportClient
                 ->acceptJson()
                 ->get($url);
         } catch (\Throwable $exception) {
-            return [
+            $result = [
                 'url' => $url,
                 'action' => $action,
                 'http_status' => 0,
@@ -79,6 +113,9 @@ class WpAllImportClient
                 'body' => '',
                 'should_continue' => false,
             ];
+            $result['should_retry'] = $this->shouldRetryAfterFailure($result);
+
+            return $result;
         }
 
         $body = (string) $response->body();
@@ -88,7 +125,7 @@ class WpAllImportClient
             ? (string) $decoded['message']
             : mb_substr(trim($body), 0, 500);
 
-        return [
+        $result = [
             'url' => $url,
             'action' => $action,
             'http_status' => $response->status(),
@@ -97,5 +134,8 @@ class WpAllImportClient
             'body' => mb_substr($body, 0, 2000),
             'should_continue' => $apiStatus === 200,
         ];
+        $result['should_retry'] = $this->shouldRetryAfterFailure($result);
+
+        return $result;
     }
 }

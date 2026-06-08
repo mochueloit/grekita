@@ -16,6 +16,9 @@ return [
     /** Segundos entre cada llamada a action=processing mientras API status=200 */
     'processing_interval_seconds' => (int) env('WP_ALL_IMPORT_PROCESSING_INTERVAL', 180),
 
+    /** Reintento tras timeout/cURL/502-504 (no marca el pipeline como finalizado) */
+    'processing_retry_interval_seconds' => (int) env('WP_ALL_IMPORT_PROCESSING_RETRY_INTERVAL', 90),
+
     /** Espera antes del primer processing tras el trigger */
     'processing_initial_delay_seconds' => (int) env('WP_ALL_IMPORT_PROCESSING_INITIAL_DELAY', 30),
 
