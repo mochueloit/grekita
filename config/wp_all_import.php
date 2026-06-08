@@ -10,6 +10,9 @@ return [
 
     'import_id' => env('WP_ALL_IMPORT_ID', '19'),
 
+    /** Importación WP All Import solo actualización stock/precio (modo rápido Grekita). */
+    'stock_price_import_id' => env('WP_ALL_IMPORT_STOCK_PRICE_ID', ''),
+
     /** Segundos entre cada llamada a action=processing mientras API status=200 */
     'processing_interval_seconds' => (int) env('WP_ALL_IMPORT_PROCESSING_INTERVAL', 180),
 

@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessInventoryImportJob;
+use App\Jobs\ProcessStockPriceImportJob;
 use App\Models\InventoryImport;
+use App\Services\Inventory\InventoryImportMode;
 use App\Services\Inventory\InventoryImageDownloadLogger;
 use App\Services\Inventory\InventorySkippedRowExporter;
 use App\Services\Inventory\InventorySkippedRowLogger;
@@ -71,6 +73,7 @@ class InventoryImportController extends Controller
             'original_filename' => $uploaded->getClientOriginalName(),
             'stored_path' => $storedPath,
             'disk' => self::DISK,
+            'import_mode' => InventoryImportMode::FULL,
             'status' => InventoryImport::STATUS_PENDING,
         ]);
 
@@ -80,6 +83,54 @@ class InventoryImportController extends Controller
 
         return response()->json([
             'message' => 'Archivo recibido. El procesamiento continúa en segundo plano.',
+            'import' => $this->importPayload($import),
+        ], 202);
+    }
+
+    public function storeStockPrice(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'csv_file' => [
+                'required',
+                'file',
+                'max:51200',
+                'mimes:csv,txt,xlsx,xls',
+            ],
+        ]);
+
+        /** @var UploadedFile $uploaded */
+        $uploaded = $validated['csv_file'];
+        $extension = strtolower($uploaded->getClientOriginalExtension() ?: $uploaded->guessExtension() ?? '');
+
+        if (! in_array($extension, self::ALLOWED_EXTENSIONS, true)) {
+            return response()->json([
+                'message' => 'Formato no soportado. Use CSV, XLS o XLSX.',
+            ], 422);
+        }
+
+        $storedPath = 'imports/'.uniqid('stock_price_', true).'.'.$extension;
+        $disk = Storage::disk(self::DISK);
+
+        if (! $disk->put($storedPath, $uploaded->getContent())) {
+            return response()->json([
+                'message' => 'No se pudo guardar el archivo subido.',
+            ], 500);
+        }
+
+        $import = InventoryImport::query()->create([
+            'original_filename' => $uploaded->getClientOriginalName(),
+            'stored_path' => $storedPath,
+            'disk' => self::DISK,
+            'import_mode' => InventoryImportMode::STOCK_PRICE_XML,
+            'status' => InventoryImport::STATUS_PENDING,
+        ]);
+
+        ProcessStockPriceImportJob::dispatch($import->id);
+
+        app(QueueWorkerStarter::class)->ensureRunning();
+
+        return response()->json([
+            'message' => 'Actualización rápida encolada: stock, precio, XML y WordPress (sin imágenes).',
             'import' => $this->importPayload($import),
         ], 202);
     }
@@ -184,6 +235,8 @@ class InventoryImportController extends Controller
         return [
             'id' => $import->id,
             'original_filename' => $import->original_filename,
+            'import_mode' => $import->importMode(),
+            'import_mode_label' => $import->importModeLabel(),
             'status' => $import->status,
             'status_label' => $import->statusLabel(),
             'total_rows' => $import->total_rows,

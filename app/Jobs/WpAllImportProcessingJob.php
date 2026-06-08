@@ -26,11 +26,12 @@ class WpAllImportProcessingJob implements ShouldQueue
 
     public function handle(WpAllImportClient $wpClient): void
     {
-        if (! $wpClient->isEnabled()) {
+        $import = InventoryImport::query()->findOrFail($this->importId);
+
+        if (! $wpClient->isEnabled($import)) {
             return;
         }
 
-        $import = InventoryImport::query()->findOrFail($this->importId);
         $checkpoint = $import->checkpoint ?? [];
         $pipeline = $checkpoint['wp_pipeline'] ?? [];
 
@@ -56,14 +57,14 @@ class WpAllImportProcessingJob implements ShouldQueue
         $progress = new InventoryImportProgress($this->importId);
         $wpLog = new WpAllImportSyncLogger($this->importId);
 
-        $url = $wpClient->buildUrl('processing');
+        $url = $wpClient->buildUrl('processing', $import);
         $wpLog->log(sprintf('GET %s (intento #%d)', $url, $this->attempt));
 
         $import->update([
             'current_step' => 'WordPress processing #'.$this->attempt,
         ]);
 
-        $response = $wpClient->call('processing');
+        $response = $wpClient->call('processing', $import);
         $wpLog->recordResponse($response, $this->attempt);
 
         $import->refresh();

@@ -40,6 +40,41 @@
                 </button>
             </form>
 
+            <div class="mt-10 border-t border-slate-200 pt-8">
+                <p class="text-sm font-semibold text-emerald-800">Actualización rápida — stock, precio y XML</p>
+                <p class="mt-2 text-sm text-slate-500">
+                    Mismo CSV de MercadoLibre, pero <strong>solo actualiza productos que ya existen</strong> (SKU en catálogo).
+                    Aplica stock por sede (Cantidad), precios desde Puerto Ordaz, genera el <strong>XML completo</strong> y dispara WordPress.
+                    <strong>Sin imágenes</strong> ni creación de productos — mucho más rápido.
+                </p>
+
+                <form id="stock-price-form" action="{{ route('inventory.import.stock-price.store') }}" method="POST" enctype="multipart/form-data" class="mt-6 space-y-4">
+                    @csrf
+
+                    <div>
+                        <label for="stock_price_csv_file" class="mb-2 block text-sm font-medium text-slate-700">
+                            Archivo CSV / Excel (stock + precio)
+                        </label>
+                        <input
+                            type="file"
+                            name="csv_file"
+                            id="stock_price_csv_file"
+                            accept=".csv,.txt,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            required
+                            class="block w-full cursor-pointer rounded-lg border border-emerald-200 bg-emerald-50/50 text-sm text-slate-700 file:mr-4 file:rounded-md file:border-0 file:bg-emerald-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-emerald-700"
+                        >
+                    </div>
+
+                    <button
+                        type="submit"
+                        id="stock-price-submit"
+                        class="inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        Actualizar stock/precio y generar XML
+                    </button>
+                </form>
+            </div>
+
             <div id="import-progress" class="mt-8 hidden rounded-xl border border-indigo-200 bg-indigo-50 p-5">
                 <div class="flex items-start justify-between gap-4">
                     <div class="min-w-0 flex-1">
@@ -203,6 +238,7 @@
                             <thead class="bg-slate-50">
                                 <tr>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Archivo</th>
+                                    <th class="px-4 py-3 text-left font-semibold text-slate-600">Tipo</th>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Estado</th>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Fecha</th>
                                     <th class="px-4 py-3 text-left font-semibold text-slate-600">Archivos</th>
@@ -212,6 +248,7 @@
                                 @foreach ($imports as $import)
                                     <tr>
                                         <td class="px-4 py-3 text-slate-700">{{ $import->original_filename }}</td>
+                                        <td class="px-4 py-3 text-xs text-slate-600">{{ $import->importModeLabel() }}</td>
                                         <td class="px-4 py-3">
                                             <span @class([
                                                 'rounded-full px-2.5 py-1 text-xs font-medium',
@@ -253,6 +290,7 @@
                     <li>Las filas omitidas se guardan en CSV descargable junto a cada importación procesada.</li>
                     <li>La descarga de imágenes genera un <strong>.log</strong> persistente consultable desde importaciones completadas.</li>
                     <li>Al terminar inventario + imágenes + XML se ejecuta <strong>WP All Import</strong> (trigger una vez, processing cada 3 min mientras API status=200).</li>
+                    <li><strong>Actualización rápida</strong>: mismo CSV, solo stock/precio en productos existentes → XML completo → WordPress (sin imágenes).</li>
                 </ul>
             </div>
         </div>
@@ -261,7 +299,9 @@
     <script>
         (function () {
             const form = document.getElementById('import-form');
+            const stockPriceForm = document.getElementById('stock-price-form');
             const submitBtn = document.getElementById('import-submit');
+            const stockPriceSubmitBtn = document.getElementById('stock-price-submit');
             const alertBox = document.getElementById('import-alert');
             const progressBox = document.getElementById('import-progress');
             const progressFilename = document.getElementById('progress-filename');
@@ -621,9 +661,19 @@
                 }
             }
 
-            function renderStatsBlock(stats) {
+            function renderStatsBlock(stats, importData) {
                 if (!stats) {
                     return '';
+                }
+
+                if (importData?.import_mode === 'stock_price_xml') {
+                    return `
+                        <p><strong>${stats.processed ?? 0}</strong> filas ·
+                        <strong>${stats.updated ?? 0}</strong> productos ·
+                        <strong>${stats.prices_updated ?? 0}</strong> precios ·
+                        <strong>${stats.skipped ?? 0}</strong> omitidas</p>
+                        <p class="mt-1">Stock fase 2: ${stats.stock_applied ?? 0} aplicado · ${stats.stock_skipped ?? 0} sin producto</p>
+                    `;
                 }
 
                 return `
@@ -668,7 +718,8 @@
 
             function renderImport(importData) {
                 progressBox.classList.remove('hidden');
-                progressFilename.textContent = importData.original_filename;
+                progressFilename.textContent = importData.original_filename
+                    + (importData.import_mode_label ? ' · ' + importData.import_mode_label : '');
                 progressStatus.textContent = importData.status_label;
                 progressBadge.textContent = importData.status_label;
                 const phaseLabel = importData.import_phase_label || '';
@@ -725,7 +776,7 @@
 
                 const liveStats = importData.partial_stats || importData.stats;
                 if (liveStats && !importData.is_finished) {
-                    progressStats.innerHTML = renderStatsBlock(liveStats);
+                    progressStats.innerHTML = renderStatsBlock(liveStats, importData);
                     progressStats.classList.remove('hidden');
                 }
 
@@ -738,12 +789,16 @@
                     progressError.classList.remove('hidden');
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Subir archivo';
+                    if (stockPriceSubmitBtn) {
+                        stockPriceSubmitBtn.disabled = false;
+                        stockPriceSubmitBtn.textContent = 'Actualizar stock/precio y generar XML';
+                    }
                     clearInterval(pollTimer);
                     return;
                 }
 
                 if (importData.status === 'completed' && importData.stats) {
-                    progressStats.innerHTML = renderStatsBlock(importData.stats);
+                    progressStats.innerHTML = renderStatsBlock(importData.stats, importData);
                     progressStats.classList.remove('hidden');
                     progressBar.style.width = '100%';
                     progressPercent.textContent = '100%';
@@ -751,13 +806,20 @@
                     loadImageLog(importData);
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Subir archivo';
+                    if (stockPriceSubmitBtn) {
+                        stockPriceSubmitBtn.disabled = false;
+                        stockPriceSubmitBtn.textContent = 'Actualizar stock/precio y generar XML';
+                    }
 
-                    const imgPending = ((importData.image_downloads?.pending ?? 0) + (importData.image_downloads?.downloading ?? 0));
+                    const isQuick = importData.import_mode === 'stock_price_xml';
+                    const imgPending = isQuick ? 0 : ((importData.image_downloads?.pending ?? 0) + (importData.image_downloads?.downloading ?? 0));
                     const wpActive = isWpSyncActive(importData);
 
                     if (imgPending === 0 && !wpActive) {
                         clearInterval(pollTimer);
-                        showAlert('Importación y sincronización WordPress completadas.', 'success');
+                        showAlert(isQuick
+                            ? 'Stock/precio actualizados. XML y WordPress completados.'
+                            : 'Importación y sincronización WordPress completadas.', 'success');
                     } else if (imgPending > 0) {
                         showAlert('Productos importados. Imágenes y/o WordPress siguen en segundo plano.', 'success');
                     } else if (wpActive) {
@@ -768,6 +830,72 @@
 
                 submitBtn.disabled = true;
                 submitBtn.textContent = 'Procesando en segundo plano…';
+                if (stockPriceSubmitBtn) {
+                    stockPriceSubmitBtn.disabled = true;
+                }
+            }
+
+            async function submitImportForm(targetForm, button, defaultLabel, uploadingLabel) {
+                const fileInput = targetForm.querySelector('input[type="file"]');
+                if (!fileInput?.files?.length) {
+                    showAlert('Selecciona un archivo primero.', 'error');
+                    return;
+                }
+
+                button.disabled = true;
+                button.textContent = uploadingLabel;
+                if (submitBtn) submitBtn.disabled = true;
+                if (stockPriceSubmitBtn) stockPriceSubmitBtn.disabled = true;
+                alertBox.classList.add('hidden');
+
+                const formData = new FormData(targetForm);
+
+                try {
+                    const response = await fetch(targetForm.action, {
+                        method: 'POST',
+                        body: formData,
+                        headers: {
+                            'Accept': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest',
+                        },
+                    });
+
+                    const payload = await response.json().catch(() => ({}));
+
+                    if (!response.ok) {
+                        const validationError = payload.errors?.csv_file?.[0];
+                        throw new Error(validationError || payload.message || 'Error al subir el archivo.');
+                    }
+
+                    progressBox.classList.remove('hidden');
+                    renderImport(payload.import);
+                    startPolling(payload.import.id);
+                    targetForm.reset();
+                    showAlert(payload.message || 'Archivo encolado.', 'success');
+                } catch (error) {
+                    showAlert(error.message, 'error');
+                    button.disabled = false;
+                    button.textContent = defaultLabel;
+                    if (submitBtn) submitBtn.disabled = false;
+                    if (stockPriceSubmitBtn) stockPriceSubmitBtn.disabled = false;
+                }
+            }
+
+            form.addEventListener('submit', async function (event) {
+                event.preventDefault();
+                await submitImportForm(form, submitBtn, 'Subir archivo', 'Subiendo archivo…');
+            });
+
+            if (stockPriceForm && stockPriceSubmitBtn) {
+                stockPriceForm.addEventListener('submit', async function (event) {
+                    event.preventDefault();
+                    await submitImportForm(
+                        stockPriceForm,
+                        stockPriceSubmitBtn,
+                        'Actualizar stock/precio y generar XML',
+                        'Subiendo archivo…',
+                    );
+                });
             }
 
             async function pollImport(id) {
@@ -783,8 +911,9 @@
                     const payload = await response.json();
                     renderImport(payload.import);
 
+                    const isQuick = payload.import.import_mode === 'stock_price_xml';
                     const img = payload.import.image_downloads ?? {};
-                    const imgPending = (img.pending ?? 0) + (img.downloading ?? 0);
+                    const imgPending = isQuick ? 0 : ((img.pending ?? 0) + (img.downloading ?? 0));
 
                     if (payload.import.is_finished && imgPending === 0 && !isWpSyncActive(payload.import)) {
                         clearInterval(pollTimer);
@@ -794,6 +923,10 @@
                     showAlert(error.message, 'error');
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Subir archivo';
+                    if (stockPriceSubmitBtn) {
+                        stockPriceSubmitBtn.disabled = false;
+                        stockPriceSubmitBtn.textContent = 'Actualizar stock/precio y generar XML';
+                    }
                 }
             }
 
@@ -818,49 +951,6 @@
                 pollImport(id);
                 pollTimer = setInterval(() => pollImport(id), 2000);
             }
-
-            form.addEventListener('submit', async function (event) {
-                event.preventDefault();
-
-                const fileInput = document.getElementById('csv_file');
-                if (!fileInput.files.length) {
-                    showAlert('Selecciona un archivo primero.', 'error');
-                    return;
-                }
-
-                submitBtn.disabled = true;
-                submitBtn.textContent = 'Subiendo archivo…';
-                alertBox.classList.add('hidden');
-
-                const formData = new FormData(form);
-
-                try {
-                    const response = await fetch(form.action, {
-                        method: 'POST',
-                        body: formData,
-                        headers: {
-                            'Accept': 'application/json',
-                            'X-Requested-With': 'XMLHttpRequest',
-                        },
-                    });
-
-                    const payload = await response.json().catch(() => ({}));
-
-                    if (!response.ok) {
-                        const validationError = payload.errors?.csv_file?.[0];
-                        throw new Error(validationError || payload.message || 'Error al subir el archivo.');
-                    }
-
-                    showAlert(payload.message, 'success');
-                    renderImport(payload.import);
-                    startPolling(payload.import.id);
-                    form.reset();
-                } catch (error) {
-                    showAlert(error.message, 'error');
-                    submitBtn.disabled = false;
-                    submitBtn.textContent = 'Subir archivo';
-                }
-            });
 
             if (activeImportId) {
                 startPolling(activeImportId);

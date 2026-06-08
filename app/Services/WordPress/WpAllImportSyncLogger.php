@@ -32,7 +32,11 @@ class WpAllImportSyncLogger
         $import = InventoryImport::query()->find($this->importId);
 
         if ($import !== null && $import->wp_sync_log_path === null) {
-            $import->update(['wp_sync_log_path' => $this->relativePath()]);
+            try {
+                $import->update(['wp_sync_log_path' => $this->relativePath()]);
+            } catch (\Throwable) {
+                // Columna wp_sync_log_path puede faltar si no se ha migrado aún.
+            }
         }
     }
 
@@ -153,7 +157,10 @@ class WpAllImportSyncLogger
         $history = $pipeline['history'] ?? [];
 
         return [
-            'enabled' => (new WpAllImportClient)->isEnabled(),
+            'enabled' => $import !== null
+                ? (new WpAllImportClient)->isEnabled($import)
+                : (new WpAllImportClient)->isEnabled(),
+            'wp_import_id' => $pipeline['wp_import_id'] ?? null,
             'phase' => $pipeline['phase'] ?? 'idle',
             'finished' => (bool) ($pipeline['finished'] ?? false),
             'last_api_status' => $pipeline['last_api_status'] ?? null,

@@ -53,30 +53,35 @@ class PostInventorySyncJob implements ShouldQueue
             return;
         }
 
-        $imageStats = (new InventoryImageDownloadLogger($this->importId))->stats();
+        if (! $import->skipsImageWaitForWp()) {
+            $imageStats = (new InventoryImageDownloadLogger($this->importId))->stats();
 
-        if (! $imageStats['finished']) {
-            $startedAt = isset($pipeline['started_at']) ? strtotime((string) $pipeline['started_at']) : time();
-            $elapsed = max(0, time() - $startedAt);
-            $maxWait = (int) config('wp_all_import.images_max_wait_seconds', 0);
+            if (! $imageStats['finished']) {
+                $startedAt = isset($pipeline['started_at']) ? strtotime((string) $pipeline['started_at']) : time();
+                $elapsed = max(0, time() - $startedAt);
+                $maxWait = (int) config('wp_all_import.images_max_wait_seconds', 0);
 
-            if ($maxWait > 0 && $elapsed >= $maxWait) {
-                $wpLog->log('Timeout esperando imágenes; continuando con XML y WordPress.', 'WARN');
-                $progress->log('AVISO: tiempo máximo de espera de imágenes alcanzado; continuando con WordPress.');
-            } else {
-                $pending = $imageStats['pending'] + $imageStats['downloading'];
-                $pipeline['phase'] = 'waiting_images';
-                $checkpoint['wp_pipeline'] = $pipeline;
-                $import->update([
-                    'checkpoint' => $checkpoint,
-                    'current_step' => "Esperando imágenes ({$pending} pendientes)",
-                ]);
-                $progress->log("Esperando descarga de imágenes ({$pending} pendientes) antes de XML y WordPress…");
-                $wpLog->log("Esperando imágenes — {$pending} pendiente(s).");
-                $this->reschedule($progress, $wpLog);
+                if ($maxWait > 0 && $elapsed >= $maxWait) {
+                    $wpLog->log('Timeout esperando imágenes; continuando con XML y WordPress.', 'WARN');
+                    $progress->log('AVISO: tiempo máximo de espera de imágenes alcanzado; continuando con WordPress.');
+                } else {
+                    $pending = $imageStats['pending'] + $imageStats['downloading'];
+                    $pipeline['phase'] = 'waiting_images';
+                    $checkpoint['wp_pipeline'] = $pipeline;
+                    $import->update([
+                        'checkpoint' => $checkpoint,
+                        'current_step' => "Esperando imágenes ({$pending} pendientes)",
+                    ]);
+                    $progress->log("Esperando descarga de imágenes ({$pending} pendientes) antes de XML y WordPress…");
+                    $wpLog->log("Esperando imágenes — {$pending} pendiente(s).");
+                    $this->reschedule($progress, $wpLog);
 
-                return;
+                    return;
+                }
             }
+        } elseif ($import->isStockPriceMode()) {
+            $wpLog->log('Modo rápido: omitiendo espera de imágenes.');
+            $progress->log('Modo rápido: generando XML sin esperar imágenes.');
         }
 
         if (empty($pipeline['xml_generated'])) {
@@ -87,14 +92,22 @@ class PostInventorySyncJob implements ShouldQueue
                 'current_step' => 'Generando XML para WordPress',
             ]);
 
-            $progress->log('Generando XML de productos para WP All Import…');
-            $wpLog->log('Generando XML de productos…');
+            $progress->log($import->isStockPriceMode()
+                ? 'Generando XML stock/precio (archivo separado) para WP All Import…'
+                : 'Generando XML de productos para WP All Import…');
+            $wpLog->log($import->isStockPriceMode()
+                ? 'Generando XML stock/precio…'
+                : 'Generando XML de productos…');
 
-            $result = $exportService->generate('inventory_import:'.$import->id);
+            $result = $import->isStockPriceMode()
+                ? $exportService->generateStockPriceUpdate('inventory_import:'.$import->id)
+                : $exportService->generate('inventory_import:'.$import->id);
 
             $pipeline['xml_generated'] = true;
             $pipeline['xml_generated_at'] = now()->toIso8601String();
             $pipeline['xml_product_count'] = $result['product_count'];
+            $pipeline['xml_export_type'] = $result['export_type'] ?? 'full';
+            $pipeline['xml_latest_path'] = $result['latest_relative_path'];
             $checkpoint['wp_pipeline'] = $pipeline;
             $import->update(['checkpoint' => $checkpoint]);
 
@@ -106,7 +119,7 @@ class PostInventorySyncJob implements ShouldQueue
             $wpLog->log('XML listo: '.$result['latest_relative_path']);
         }
 
-        if (! $wpClient->isEnabled()) {
+        if (! $wpClient->isEnabled($import)) {
             $pipeline['phase'] = 'completed';
             $pipeline['finished'] = true;
             $pipeline['finished_at'] = now()->toIso8601String();
@@ -133,11 +146,21 @@ class PostInventorySyncJob implements ShouldQueue
                 'current_step' => 'Activando importación en WordPress',
             ]);
 
-            $url = $wpClient->buildUrl('trigger');
+            $url = $wpClient->buildUrl('trigger', $import);
             $progress->log('Ejecutando WP All Import trigger (una sola vez)…');
             $wpLog->log('GET '.$url);
 
-            $response = $wpClient->call('trigger');
+            $wpImportId = $wpClient->resolveImportId($import);
+            $pipeline['wp_import_id'] = $wpImportId;
+            $checkpoint['wp_pipeline'] = $pipeline;
+            $import->update(['checkpoint' => $checkpoint]);
+
+            if ($import->isStockPriceMode()) {
+                $progress->log("WP All Import modo actualización — import_id {$wpImportId}");
+                $wpLog->log("Modo rápido — WP import_id {$wpImportId}");
+            }
+
+            $response = $wpClient->call('trigger', $import);
             $wpLog->recordResponse($response);
 
             $import->refresh();

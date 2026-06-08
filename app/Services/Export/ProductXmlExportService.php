@@ -31,10 +31,57 @@ class ProductXmlExportService
      */
     public function generate(string $trigger = 'manual'): array
     {
+        return $this->runExport(
+            trigger: $trigger,
+            filename: (string) config('wp_export.filename', 'products.xml'),
+            latestRelativePath: (string) config('wp_export.latest_relative_path', 'exports/wp-xml/latest/products.xml'),
+            catalogVersion: '2',
+            fullCatalog: true,
+        );
+    }
+
+    /**
+     * XML reducido (SKU, precios, stock) — no pisa products.xml del catálogo completo.
+     *
+     * @return array<string, mixed>
+     */
+    public function generateStockPriceUpdate(string $trigger = 'manual'): array
+    {
+        return $this->runExport(
+            trigger: $trigger,
+            filename: (string) config('wp_export.stock_price_filename', 'stock-price-update.xml'),
+            latestRelativePath: (string) config('wp_export.stock_price_latest_relative_path', 'exports/wp-xml/latest/stock-price-update.xml'),
+            catalogVersion: 'stock-price-1',
+            fullCatalog: false,
+        );
+    }
+
+    /**
+     * @return array{
+     *     generated_at: string,
+     *     product_count: int,
+     *     database_product_count: int,
+     *     relative_path: string,
+     *     absolute_path: string,
+     *     manifest_relative_path: string,
+     *     latest_relative_path: string,
+     *     latest_absolute_path: string,
+     *     trigger: string,
+     *     disk: string,
+     *     export_type: string,
+     *     checksum_sha256: ?string
+     * }
+     */
+    private function runExport(
+        string $trigger,
+        string $filename,
+        string $latestRelativePath,
+        string $catalogVersion,
+        bool $fullCatalog,
+    ): array {
         $disk = (string) config('wp_export.disk', 'local');
         $basePath = trim((string) config('wp_export.base_path', 'exports/wp-xml'), '/');
-        $filename = (string) config('wp_export.filename', 'products.xml');
-        $latestRelativePath = (string) config('wp_export.latest_relative_path', 'exports/wp-xml/latest/products.xml');
+        $exportType = $fullCatalog ? 'full' : 'stock_price';
 
         $generatedAt = now();
         $folder = $generatedAt->format('Y-m-d').'/'.$generatedAt->format('H-i-s');
@@ -45,7 +92,9 @@ class ProductXmlExportService
         Storage::disk($disk)->makeDirectory($relativeDir);
 
         $databaseProductCount = Product::query()->count();
-        $productCount = $this->writeXmlFile($disk, $relativePath, $generatedAt);
+        $productCount = $fullCatalog
+            ? $this->writeFullXmlFile($disk, $relativePath, $generatedAt, $catalogVersion)
+            : $this->writeStockPriceXmlFile($disk, $relativePath, $generatedAt, $catalogVersion);
 
         if ($productCount !== $databaseProductCount) {
             throw new \RuntimeException(sprintf(
@@ -71,13 +120,17 @@ class ProductXmlExportService
             'latest_absolute_path' => Storage::disk($disk)->path($latestRelativePath),
             'trigger' => $trigger,
             'disk' => $disk,
+            'export_type' => $exportType,
             'checksum_sha256' => $checksum,
         ];
 
         $manifestJson = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)."\n";
 
         Storage::disk($disk)->put($manifestRelativePath, $manifestJson);
-        Storage::disk($disk)->put(dirname($latestRelativePath).'/manifest.json', $manifestJson);
+
+        $latestManifestDir = dirname($latestRelativePath);
+        $latestManifestName = $fullCatalog ? 'manifest.json' : 'stock-price-manifest.json';
+        Storage::disk($disk)->put($latestManifestDir.'/'.$latestManifestName, $manifestJson);
 
         return [
             'generated_at' => $manifest['generated_at'],
@@ -90,6 +143,7 @@ class ProductXmlExportService
             'latest_absolute_path' => $manifest['latest_absolute_path'],
             'trigger' => $trigger,
             'disk' => $disk,
+            'export_type' => $exportType,
             'checksum_sha256' => $checksum,
         ];
     }
@@ -130,7 +184,7 @@ class ProductXmlExportService
         ];
     }
 
-    private function writeXmlFile(string $disk, string $relativePath, \Illuminate\Support\Carbon $generatedAt): int
+    private function writeFullXmlFile(string $disk, string $relativePath, \Illuminate\Support\Carbon $generatedAt, string $catalogVersion): int
     {
         $absolutePath = Storage::disk($disk)->path($relativePath);
 
@@ -143,7 +197,7 @@ class ProductXmlExportService
         $writer->startElement('catalog');
         $writer->writeAttribute('generated_at', $generatedAt->toIso8601String());
         $writer->writeAttribute('generator', 'grekita-wp-export');
-        $writer->writeAttribute('version', '2');
+        $writer->writeAttribute('version', $catalogVersion);
 
         $writer->startElement('products');
 
@@ -167,6 +221,71 @@ class ProductXmlExportService
         $writer->flush();
 
         return $count;
+    }
+
+    private function writeStockPriceXmlFile(string $disk, string $relativePath, \Illuminate\Support\Carbon $generatedAt, string $catalogVersion): int
+    {
+        $absolutePath = Storage::disk($disk)->path($relativePath);
+
+        $writer = new XMLWriter;
+        $writer->openUri($absolutePath);
+        $writer->setIndent(true);
+        $writer->setIndentString('  ');
+        $writer->startDocument('1.0', 'UTF-8');
+
+        $writer->startElement('catalog');
+        $writer->writeAttribute('generated_at', $generatedAt->toIso8601String());
+        $writer->writeAttribute('generator', 'grekita-wp-export');
+        $writer->writeAttribute('version', $catalogVersion);
+        $writer->writeAttribute('export_type', 'stock_price');
+
+        $writer->startElement('products');
+
+        $count = 0;
+
+        foreach (
+            Product::query()
+                ->with(['locations'])
+                ->orderBy('sku')
+                ->cursor() as $product
+        ) {
+            $this->writeStockPriceProductNode($writer, $product);
+            $count++;
+        }
+
+        $writer->endElement();
+
+        $this->writeRequiredScalar($writer, 'product_count', $count);
+        $writer->endElement();
+        $writer->endDocument();
+        $writer->flush();
+
+        return $count;
+    }
+
+    private function writeStockPriceProductNode(XMLWriter $writer, Product $product): void
+    {
+        $stockRows = $this->stockService->stocksForProduct($product);
+        $stockGeneral = array_sum(array_column($stockRows, 'stock'));
+
+        $writer->startElement('product');
+
+        $this->writeRequiredScalar($writer, 'id', $product->id);
+        $this->writeRequiredScalar($writer, 'sku', $product->sku);
+        $this->writeRequiredScalar($writer, 'price', $product->price ?? 0);
+        $this->writeRequiredScalar($writer, 'price_foreign', $product->price_foreign ?? 0);
+        $this->writeRequiredScalar($writer, 'price_currency', $product->price_currency);
+        $this->writeRequiredScalar($writer, 'price_formatted', $product->formattedPrice());
+        $this->writeRequiredScalar($writer, 'principal_stock', $product->principalStockTotal());
+        $this->writeRequiredScalar($writer, 'stock_general', $stockGeneral);
+        $this->writeStockLocations($writer, $stockRows);
+
+        $writer->endElement();
+    }
+
+    private function writeXmlFile(string $disk, string $relativePath, \Illuminate\Support\Carbon $generatedAt): int
+    {
+        return $this->writeFullXmlFile($disk, $relativePath, $generatedAt, '2');
     }
 
     private function writeProductNode(XMLWriter $writer, Product $product): void

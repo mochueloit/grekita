@@ -99,6 +99,34 @@ class ProductXmlExportServiceTest extends TestCase
         $this->assertStringContainsString('<stock_general>7</stock_general>', $xml);
     }
 
+    public function test_generates_separate_stock_price_xml_without_catalog_fields(): void
+    {
+        $po = Location::query()->create(['name' => 'Sede Puerto Ordaz', 'slug' => 'puerto-ordaz']);
+
+        $product = Product::query()->create([
+            'sku' => '6098',
+            'name' => 'Producto',
+            'price' => 100000,
+            'principal_stock' => 5,
+        ]);
+
+        $product->locations()->attach($po->id, ['stock' => 5]);
+
+        $result = app(ProductXmlExportService::class)->generateStockPriceUpdate('test');
+
+        $this->assertSame('stock_price', $result['export_type']);
+        $this->assertStringContainsString('stock-price-update.xml', $result['latest_relative_path']);
+
+        $xml = Storage::disk('local')->get($result['relative_path']);
+
+        $this->assertStringContainsString('<sku>6098</sku>', $xml);
+        $this->assertStringContainsString('<stock_general>5</stock_general>', $xml);
+        $this->assertStringNotContainsString('<images>', $xml);
+        $this->assertStringNotContainsString('<categories>', $xml);
+
+        $this->assertFalse(Storage::disk('local')->exists('exports/wp-xml/latest/products.xml'));
+    }
+
     public function test_stock_general_is_zero_when_all_locations_empty(): void
     {
         Location::query()->create(['name' => 'Sede Puerto Ordaz', 'slug' => 'puerto-ordaz']);

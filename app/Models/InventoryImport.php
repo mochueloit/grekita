@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Inventory\InventoryImportMode;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
@@ -20,6 +21,7 @@ class InventoryImport extends Model
         'stored_path',
         'header_map',
         'disk',
+        'import_mode',
         'status',
         'total_rows',
         'processed_rows',
@@ -135,6 +137,30 @@ class InventoryImport extends Model
         return $phase !== null
             ? \App\Services\Inventory\InventoryImportPhase::label($phase)
             : null;
+    }
+
+    public function isStockPriceMode(): bool
+    {
+        return $this->importMode() === InventoryImportMode::STOCK_PRICE_XML;
+    }
+
+    public function importMode(): string
+    {
+        return $this->import_mode ?? InventoryImportMode::FULL;
+    }
+
+    public function importModeLabel(): string
+    {
+        return InventoryImportMode::label($this->importMode());
+    }
+
+    public function skipsImageWaitForWp(): bool
+    {
+        if ($this->isStockPriceMode()) {
+            return true;
+        }
+
+        return (bool) (($this->checkpoint ?? [])['skip_image_wait'] ?? false);
     }
 
     public function workerHint(): ?string

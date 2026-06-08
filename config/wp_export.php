@@ -20,4 +20,9 @@ return [
 
     'latest_relative_path' => 'exports/wp-xml/latest/products.xml',
 
+    /** XML liviano solo stock/precio (modo rápido Grekita → WP All Import #20) */
+    'stock_price_filename' => 'stock-price-update.xml',
+
+    'stock_price_latest_relative_path' => 'exports/wp-xml/latest/stock-price-update.xml',
+
 ];
