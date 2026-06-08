@@ -1,7 +1,7 @@
 @if ($imports->isNotEmpty())
-    <div class="mt-8">
-        <p class="text-sm font-semibold text-slate-700">{{ $historyTitle ?? 'Importaciones recientes' }}</p>
-        <div class="mt-3 overflow-hidden rounded-xl border border-slate-200">
+    <div class="mt-6">
+        <p class="text-sm font-semibold text-slate-800">{{ $historyTitle ?? 'Importaciones recientes' }}</p>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-200">
             <table class="min-w-full divide-y divide-slate-200 text-sm">
                 <thead class="bg-slate-50">
                     <tr>
@@ -17,31 +17,28 @@
                             $viewRoute = $import->isStockPriceMode()
                                 ? route('inventory.import.stock-price.show', ['import' => $import->id])
                                 : route('inventory.import.show', ['import' => $import->id]);
-                            $linkClass = $import->isStockPriceMode()
-                                ? 'font-medium text-emerald-600 hover:text-emerald-800'
-                                : 'font-medium text-indigo-600 hover:text-indigo-800';
                         @endphp
                         <tr>
                             <td class="px-4 py-3 text-slate-700">{{ $import->original_filename }}</td>
                             <td class="px-4 py-3">
                                 <span @class([
-                                    'rounded-full px-2.5 py-1 text-xs font-medium',
-                                    'bg-amber-100 text-amber-800' => in_array($import->status, ['pending', 'processing']),
-                                    'bg-emerald-100 text-emerald-800' => $import->status === 'completed',
-                                    'bg-red-100 text-red-800' => $import->status === 'failed',
+                                    'rounded-full border px-2.5 py-1 text-xs font-medium',
+                                    'border-slate-300 bg-slate-100 text-slate-700' => in_array($import->status, ['pending', 'processing']),
+                                    'border-slate-900 bg-slate-900 text-white' => $import->status === 'completed',
+                                    'border-slate-400 bg-slate-200 text-slate-900' => $import->status === 'failed',
                                 ])>{{ $import->statusLabel() }}</span>
                             </td>
                             <td class="px-4 py-3 text-slate-500">{{ $import->created_at?->format('d/m/Y H:i') }}</td>
                             <td class="px-4 py-3 text-xs">
-                                <a href="{{ $viewRoute }}" class="{{ $linkClass }}">Ver</a>
+                                <a href="{{ $viewRoute }}" class="font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-900">Ver</a>
                                 @if ($import->image_download_log_path)
-                                    · <a href="{{ route('inventory.import.images.log.download', $import) }}" class="text-slate-600 hover:text-slate-900">Log imágenes</a>
+                                    · <a href="{{ route('inventory.import.images.log.download', $import) }}" class="text-slate-600 hover:text-slate-900">Log imagenes</a>
                                 @endif
                                 @if ($import->wp_sync_log_path)
-                                    · <a href="{{ route('inventory.import.wp.log.download', $import) }}" class="text-violet-700 hover:text-violet-900">Log WordPress</a>
+                                    · <a href="{{ route('inventory.import.wp.log.download', $import) }}" class="text-slate-600 hover:text-slate-900">Log WordPress</a>
                                 @endif
                                 @if ($import->skipped_rows_csv_path)
-                                    · <a href="{{ route('inventory.import.skipped.download', $import) }}" class="text-amber-700 hover:text-amber-900">CSV omitidas</a>
+                                    · <a href="{{ route('inventory.import.skipped.download', $import) }}" class="text-slate-600 hover:text-slate-900">CSV omitidas</a>
                                 @endif
                             </td>
                         </tr>

@@ -105,13 +105,13 @@
             <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
                 <a
                     href="{{ route('inventory.import.show') }}"
-                    class="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                    class="inline-flex rounded-lg border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                 >
                     Importar productos nuevos
                 </a>
                 <a
                     href="{{ route('inventory.import.stock-price.show') }}"
-                    class="inline-flex rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+                    class="inline-flex rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
                 >
                     Actualizar precios y stock
                 </a>

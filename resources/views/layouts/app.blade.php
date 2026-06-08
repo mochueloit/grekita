@@ -10,15 +10,15 @@
     <header class="border-b border-slate-200 bg-white">
         <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
             <div>
-                <p class="text-xs font-semibold uppercase tracking-widest text-indigo-600">Grekita</p>
+                <p class="text-xs font-semibold uppercase tracking-widest text-slate-500">Grekita</p>
                 <h1 class="text-lg font-semibold text-slate-900">@yield('heading', 'Inventario')</h1>
             </div>
-            <nav class="flex items-center gap-2">
+            <nav class="flex flex-wrap items-center gap-1 sm:gap-2">
                 <a
                     href="{{ route('products.index') }}"
                     @class([
                         'rounded-lg px-3 py-2 text-sm font-medium transition',
-                        'bg-indigo-600 text-white' => request()->routeIs('products.*'),
+                        'bg-slate-900 text-white' => request()->routeIs('products.*'),
                         'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('products.*'),
                     ])
                 >
@@ -28,7 +28,7 @@
                     href="{{ route('inventory.import.show') }}"
                     @class([
                         'rounded-lg px-3 py-2 text-sm font-medium transition',
-                        'bg-indigo-600 text-white' => request()->routeIs('inventory.import.show'),
+                        'bg-slate-900 text-white' => request()->routeIs('inventory.import.show'),
                         'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('inventory.import.show'),
                     ])
                 >
@@ -38,7 +38,7 @@
                     href="{{ route('inventory.import.stock-price.show') }}"
                     @class([
                         'rounded-lg px-3 py-2 text-sm font-medium transition',
-                        'bg-emerald-600 text-white' => request()->routeIs('inventory.import.stock-price.*'),
+                        'bg-slate-900 text-white' => request()->routeIs('inventory.import.stock-price.*'),
                         'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('inventory.import.stock-price.*'),
                     ])
                 >
