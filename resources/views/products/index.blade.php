@@ -102,12 +102,20 @@
                     Sube el inventario CSV para empezar a ver productos aquí.
                 @endif
             </p>
-            <a
-                href="{{ route('inventory.import.show') }}"
-                class="mt-6 inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-            >
-                Ir a carga CSV
-            </a>
+            <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
+                <a
+                    href="{{ route('inventory.import.show') }}"
+                    class="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                >
+                    Importar productos nuevos
+                </a>
+                <a
+                    href="{{ route('inventory.import.stock-price.show') }}"
+                    class="inline-flex rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+                >
+                    Actualizar precios y stock
+                </a>
+            </div>
         </div>
     @else
         <div class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">

@@ -26,6 +26,9 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/inventory/import', [InventoryImportController::class, 'show'])
         ->name('inventory.import.show');
 
+    Route::get('/inventory/import/stock-price', [InventoryImportController::class, 'showStockPrice'])
+        ->name('inventory.import.stock-price.show');
+
     Route::post('/inventory/import', [InventoryImportController::class, 'store'])
         ->name('inventory.import.store');
 

@@ -27,14 +27,32 @@ class InventoryImportController extends Controller
 
     public function show(Request $request): View
     {
+        return $this->renderImportPage($request, InventoryImportMode::FULL);
+    }
+
+    public function showStockPrice(Request $request): View
+    {
+        return $this->renderImportPage($request, InventoryImportMode::STOCK_PRICE_XML, 'inventory.stock-price-import');
+    }
+
+    private function renderImportPage(
+        Request $request,
+        string $importMode,
+        string $view = 'inventory.import',
+    ): View {
         $activeImportId = $request->integer('import')
             ?: InventoryImport::query()
+                ->where('import_mode', $importMode)
                 ->whereIn('status', [InventoryImport::STATUS_PENDING, InventoryImport::STATUS_PROCESSING])
                 ->latest()
                 ->value('id');
 
-        return view('inventory.import', [
-            'imports' => InventoryImport::query()->latest()->limit(10)->get(),
+        return view($view, [
+            'imports' => InventoryImport::query()
+                ->where('import_mode', $importMode)
+                ->latest()
+                ->limit(10)
+                ->get(),
             'activeImportId' => $activeImportId,
         ]);
     }

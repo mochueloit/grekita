@@ -28,11 +28,21 @@
                     href="{{ route('inventory.import.show') }}"
                     @class([
                         'rounded-lg px-3 py-2 text-sm font-medium transition',
-                        'bg-indigo-600 text-white' => request()->routeIs('inventory.*'),
-                        'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('inventory.*'),
+                        'bg-indigo-600 text-white' => request()->routeIs('inventory.import.show'),
+                        'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('inventory.import.show'),
                     ])
                 >
-                    Carga CSV
+                    Importar productos
+                </a>
+                <a
+                    href="{{ route('inventory.import.stock-price.show') }}"
+                    @class([
+                        'rounded-lg px-3 py-2 text-sm font-medium transition',
+                        'bg-emerald-600 text-white' => request()->routeIs('inventory.import.stock-price.*'),
+                        'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('inventory.import.stock-price.*'),
+                    ])
+                >
+                    Precios y stock
                 </a>
                 @auth
                     <span class="hidden text-xs text-slate-500 sm:inline">{{ auth()->user()->email }}</span>

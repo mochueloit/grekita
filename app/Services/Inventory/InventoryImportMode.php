@@ -11,8 +11,8 @@ class InventoryImportMode
     public static function label(string $mode): string
     {
         return match ($mode) {
-            self::STOCK_PRICE_XML => 'Rápida — stock, precio y XML',
-            default => 'Completa — catálogo e imágenes',
+            self::STOCK_PRICE_XML => 'Actualizar precios y stock',
+            default => 'Importar productos nuevos',
         };
     }
 }
