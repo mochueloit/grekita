@@ -26,8 +26,7 @@ class InventoryQueueInfoCommand extends Command
         $this->components->twoColumnDetail('Jobs en cola <comment>default</comment>', 'Importación CSV/Excel');
         $this->line('    • ProcessInventoryImportJob — prepara archivo y encadena lotes');
         $this->line('    • ProcessInventoryImportChunkJob — fase 1 (PO catálogo) luego fase 2 (stock otras sedes), ~'.config('inventory.rows_per_job', 25).' filas/job');
-        $this->line('    • PostInventorySyncJob — imágenes + XML + WP All Import trigger');
-        $this->line('    • WpAllImportProcessingJob — polling processing cada '.config('wp_all_import.processing_interval_seconds', 180).' s');
+        $this->line('    • PostInventorySyncJob — imágenes + XML + WP All Import trigger (una vez)');
         $this->line('    • ExportProductsXmlJob — XML manual (POST /api/products/export-xml)');
         $this->newLine();
 
@@ -74,6 +73,13 @@ class InventoryQueueInfoCommand extends Command
         $this->line('  Ver jobs pendientes:  <fg=gray>php artisan queue:monitor '.$queues.'</>');
         $this->line('  Ver jobs fallidos:    <fg=gray>php artisan queue:failed</>');
         $this->line('  Reintentar fallidos:  <fg=gray>php artisan queue:retry all</>');
+        $this->newLine();
+
+        $this->components->info('WordPress — sincronización externa');
+        $this->line('  Grekita: trigger al terminar XML + poll cada '.config('wp_all_import.status_poll_interval_minutes', 30).' min');
+        $this->line('  Servidor WP: processing cada '.config('wp_all_import.server_cron_interval_minutes', 5).' min (wget/cron)');
+        $this->line('  Ver líneas cron WP:  <fg=gray>php artisan inventory:wp-server-cron-info</>');
+        $this->line('  Poll manual:           <fg=gray>php artisan inventory:wp-sync-poll</>');
 
         return self::SUCCESS;
     }

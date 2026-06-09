@@ -48,3 +48,11 @@ Schedule::command('queue:prune-failed --hours=168')
     ->weekly()
     ->mondays()
     ->at('03:00');
+
+$wpPollMinutes = max(5, min(60, (int) config('wp_all_import.status_poll_interval_minutes', 30)));
+
+Schedule::command('inventory:wp-sync-poll')
+    ->name('grekita-wp-sync-poll')
+    ->cron(sprintf('*/%d * * * *', $wpPollMinutes))
+    ->withoutOverlapping(15)
+    ->appendOutputTo(storage_path('logs/wp-sync-poll.log'));

@@ -49,6 +49,24 @@ class WpAllImportClient
         return $base.'?'.$query;
     }
 
+    public function isStillProcessing(array $response): bool
+    {
+        return ($response['should_continue'] ?? false) === true;
+    }
+
+    public function isImportFinished(array $response): bool
+    {
+        if ($this->isStillProcessing($response)) {
+            return false;
+        }
+
+        if ($this->shouldRetryAfterFailure($response)) {
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * @param  array{
      *     should_continue?: bool,
@@ -66,7 +84,14 @@ class WpAllImportClient
         $httpStatus = (int) ($response['http_status'] ?? 0);
         $message = strtolower((string) ($response['message'] ?? ''));
 
-        if (in_array($httpStatus, [408, 429, 502, 503, 504], true)) {
+        if (in_array($httpStatus, [408, 429, 502, 503, 504, 524], true)) {
+            return true;
+        }
+
+        if (str_contains($message, 'error code: 524')
+            || str_contains($message, 'error code 524')
+            || str_contains($message, 'gateway time-out')
+            || str_contains($message, 'gateway timeout')) {
             return true;
         }
 
@@ -94,10 +119,10 @@ class WpAllImportClient
      *     should_retry: bool
      * }
      */
-    public function call(string $action, ?InventoryImport $import = null): array
+    public function call(string $action, ?InventoryImport $import = null, ?int $timeout = null): array
     {
         $url = $this->buildUrl($action, $import);
-        $timeout = (int) config('wp_all_import.http_timeout_seconds', 120);
+        $timeout ??= (int) config('wp_all_import.http_timeout_seconds', 120);
 
         try {
             $response = Http::timeout($timeout)

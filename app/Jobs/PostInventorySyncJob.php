@@ -168,18 +168,23 @@ class PostInventorySyncJob implements ShouldQueue
             $pipeline = $checkpoint['wp_pipeline'] ?? [];
             $pipeline['triggered'] = true;
             $pipeline['triggered_at'] = now()->toIso8601String();
-            $pipeline['phase'] = 'processing';
+            $pipeline['phase'] = 'processing_external';
+            $pipeline['processing_mode'] = 'external';
+            $pipeline['poll_count'] = 0;
             $checkpoint['wp_pipeline'] = $pipeline;
-            $import->update(['checkpoint' => $checkpoint]);
+            $import->update([
+                'checkpoint' => $checkpoint,
+                'current_step' => 'WordPress: en curso (cron servidor)',
+            ]);
+
+            $pollMinutes = (int) config('wp_all_import.status_poll_interval_minutes', 30);
+            $serverCronMinutes = (int) config('wp_all_import.server_cron_interval_minutes', 5);
 
             $progress->log('WP trigger — '.$response['message']);
-
-            $initialDelay = (int) config('wp_all_import.processing_initial_delay_seconds', 30);
-            WpAllImportProcessingJob::dispatch($this->importId, 1)
-                ->delay(now()->addSeconds($initialDelay));
-
-            $progress->log("Procesamiento WP encolado (primer intento en {$initialDelay} s, luego cada ".config('wp_all_import.processing_interval_seconds', 180).' s mientras API status=200).');
-            $wpLog->log("Encolado processing — primer intento en {$initialDelay} s.");
+            $progress->log("El cron en tiendasgreka.com debe ejecutar processing cada {$serverCronMinutes} min (php artisan inventory:wp-server-cron-info).");
+            $progress->log("Grekita verificará si terminó cada {$pollMinutes} min (timeout/524 no marcan fin).");
+            $wpLog->log('Modo external: processing = cron servidor WordPress.');
+            $wpLog->log("Grekita poll cada {$pollMinutes} min vía inventory:wp-sync-poll.");
 
             return;
         }

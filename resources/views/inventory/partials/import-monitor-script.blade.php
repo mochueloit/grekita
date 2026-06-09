@@ -156,6 +156,7 @@
                 exporting_xml: 'Generando XML',
                 triggering: 'Activando importacion',
                 processing: 'Procesando en WordPress',
+                processing_external: 'En WordPress (cron servidor)',
                 completed: 'Completado',
                 idle: 'Inactivo',
             };
@@ -232,7 +233,7 @@
         function isWpSyncActive(importData) {
             const wpSync = importData.wp_sync ?? {};
             return wpSync.enabled === true && wpSync.finished !== true
-                && ['waiting', 'waiting_images', 'exporting_xml', 'triggering', 'processing'].includes(wpSync.phase);
+                && ['waiting', 'waiting_images', 'exporting_xml', 'triggering', 'processing', 'processing_external'].includes(wpSync.phase);
         }
 
         function renderImageLogLines(lines) {

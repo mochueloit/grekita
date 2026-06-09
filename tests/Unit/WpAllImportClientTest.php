@@ -57,51 +57,63 @@ class WpAllImportClientTest extends TestCase
         $this->assertSame('19', $client->resolveImportId($import));
     }
 
-    public function test_curl_timeout_should_retry_instead_of_finish(): void
+    public function test_curl_timeout_is_transient_not_finished(): void
     {
         $client = new WpAllImportClient;
 
-        $this->assertTrue($client->shouldRetryAfterFailure([
+        $response = [
             'should_continue' => false,
             'http_status' => 0,
             'api_status' => null,
             'message' => 'cURL error 28: Operation timed out after 120002 milliseconds with 0 bytes received',
-        ]));
+        ];
+
+        $this->assertTrue($client->shouldRetryAfterFailure($response));
+        $this->assertFalse($client->isImportFinished($response));
     }
 
-    public function test_api_200_still_processing_is_not_retryable_failure(): void
+    public function test_cloudflare_524_in_message_is_transient(): void
     {
         $client = new WpAllImportClient;
 
-        $this->assertFalse($client->shouldRetryAfterFailure([
+        $response = [
+            'should_continue' => false,
+            'http_status' => 200,
+            'api_status' => null,
+            'message' => 'error code: 524',
+        ];
+
+        $this->assertTrue($client->shouldRetryAfterFailure($response));
+        $this->assertFalse($client->isImportFinished($response));
+    }
+
+    public function test_api_200_means_still_processing(): void
+    {
+        $client = new WpAllImportClient;
+
+        $response = [
             'should_continue' => true,
             'http_status' => 200,
             'api_status' => 200,
             'message' => 'Processing',
-        ]));
+        ];
+
+        $this->assertTrue($client->isStillProcessing($response));
+        $this->assertFalse($client->isImportFinished($response));
     }
 
-    public function test_http_504_gateway_timeout_is_retryable(): void
+    public function test_non_200_non_transient_means_finished(): void
     {
         $client = new WpAllImportClient;
 
-        $this->assertTrue($client->shouldRetryAfterFailure([
-            'should_continue' => false,
-            'http_status' => 504,
-            'api_status' => null,
-            'message' => '504 Gateway Time-out',
-        ]));
-    }
-
-    public function test_import_finished_with_non_retryable_api_status(): void
-    {
-        $client = new WpAllImportClient;
-
-        $this->assertFalse($client->shouldRetryAfterFailure([
+        $response = [
             'should_continue' => false,
             'http_status' => 200,
             'api_status' => 403,
             'message' => 'Import complete',
-        ]));
+        ];
+
+        $this->assertFalse($client->shouldRetryAfterFailure($response));
+        $this->assertTrue($client->isImportFinished($response));
     }
 }
