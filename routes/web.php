@@ -29,11 +29,17 @@ Route::middleware('auth')->group(function (): void {
     Route::get('/inventory/import/stock-price', [InventoryImportController::class, 'showStockPrice'])
         ->name('inventory.import.stock-price.show');
 
+    Route::get('/inventory/import/exclusive', [InventoryImportController::class, 'showExclusiveStore'])
+        ->name('inventory.import.exclusive.show');
+
     Route::post('/inventory/import', [InventoryImportController::class, 'store'])
         ->name('inventory.import.store');
 
     Route::post('/inventory/import/stock-price', [InventoryImportController::class, 'storeStockPrice'])
         ->name('inventory.import.stock-price.store');
+
+    Route::post('/inventory/import/exclusive', [InventoryImportController::class, 'storeExclusiveStore'])
+        ->name('inventory.import.exclusive.store');
 
     Route::get('/inventory/import/{import}/status', [InventoryImportController::class, 'status'])
         ->name('inventory.import.status');

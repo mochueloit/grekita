@@ -99,20 +99,35 @@ class PostInventorySyncJob implements ShouldQueue
                 ? 'Generando XML stock/precio…'
                 : 'Generando XML de productos…');
 
+            $syncedSkus = $import->syncedSkusForExport();
+            $partialExport = $syncedSkus !== [];
+
+            if ($partialExport) {
+                $progress->log(sprintf(
+                    'Exportación parcial: %d SKU(s) del CSV → WordPress.',
+                    count($syncedSkus),
+                ));
+                $wpLog->log('Exportación parcial — '.count($syncedSkus).' SKU(s).');
+            }
+
             $result = $import->isStockPriceMode()
-                ? $exportService->generateStockPriceUpdate('inventory_import:'.$import->id)
-                : $exportService->generate('inventory_import:'.$import->id);
+                ? $exportService->generateStockPriceUpdate('inventory_import:'.$import->id, $partialExport ? $syncedSkus : null)
+                : $exportService->generate('inventory_import:'.$import->id, $partialExport ? $syncedSkus : null);
 
             $pipeline['xml_generated'] = true;
             $pipeline['xml_generated_at'] = now()->toIso8601String();
             $pipeline['xml_product_count'] = $result['product_count'];
             $pipeline['xml_export_type'] = $result['export_type'] ?? 'full';
+            $pipeline['xml_export_scope'] = $result['export_scope'] ?? 'full';
+            $pipeline['xml_synced_sku_count'] = $partialExport ? count($syncedSkus) : null;
             $pipeline['xml_latest_path'] = $result['latest_relative_path'];
             $checkpoint['wp_pipeline'] = $pipeline;
             $import->update(['checkpoint' => $checkpoint]);
 
             $progress->log(sprintf(
-                'XML generado (%d productos) → %s',
+                $partialExport
+                    ? 'XML parcial generado (%d productos del CSV) → %s'
+                    : 'XML generado (%d productos) → %s',
                 $result['product_count'],
                 $result['latest_relative_path'],
             ));

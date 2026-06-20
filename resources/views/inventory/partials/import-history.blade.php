@@ -14,9 +14,11 @@
                 <tbody class="divide-y divide-slate-100 bg-white">
                     @foreach ($imports as $import)
                         @php
-                            $viewRoute = $import->isStockPriceMode()
-                                ? route('inventory.import.stock-price.show', ['import' => $import->id])
-                                : route('inventory.import.show', ['import' => $import->id]);
+                            $viewRoute = match (true) {
+                                $import->isStockPriceMode() => route('inventory.import.stock-price.show', ['import' => $import->id]),
+                                $import->isExclusiveStoreMode() => route('inventory.import.exclusive.show', ['import' => $import->id]),
+                                default => route('inventory.import.show', ['import' => $import->id]),
+                            };
                         @endphp
                         <tr>
                             <td class="px-4 py-3 text-slate-700">{{ $import->original_filename }}</td>

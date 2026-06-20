@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessExclusiveStoreImportJob;
 use App\Jobs\ProcessInventoryImportJob;
 use App\Jobs\ProcessStockPriceImportJob;
 use App\Models\InventoryImport;
@@ -33,6 +34,11 @@ class InventoryImportController extends Controller
     public function showStockPrice(Request $request): View
     {
         return $this->renderImportPage($request, InventoryImportMode::STOCK_PRICE_XML, 'inventory.stock-price-import');
+    }
+
+    public function showExclusiveStore(Request $request): View
+    {
+        return $this->renderImportPage($request, InventoryImportMode::EXCLUSIVE_STORE, 'inventory.exclusive-store-import');
     }
 
     private function renderImportPage(
@@ -149,6 +155,54 @@ class InventoryImportController extends Controller
 
         return response()->json([
             'message' => 'Actualización rápida encolada: stock, precio, XML y WordPress (sin imágenes).',
+            'import' => $this->importPayload($import),
+        ], 202);
+    }
+
+    public function storeExclusiveStore(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'csv_file' => [
+                'required',
+                'file',
+                'max:51200',
+                'mimes:csv,txt,xlsx,xls',
+            ],
+        ]);
+
+        /** @var UploadedFile $uploaded */
+        $uploaded = $validated['csv_file'];
+        $extension = strtolower($uploaded->getClientOriginalExtension() ?: $uploaded->guessExtension() ?? '');
+
+        if (! in_array($extension, self::ALLOWED_EXTENSIONS, true)) {
+            return response()->json([
+                'message' => 'Formato no soportado. Use CSV, XLS o XLSX.',
+            ], 422);
+        }
+
+        $storedPath = 'imports/'.uniqid('exclusive_', true).'.'.$extension;
+        $disk = Storage::disk(self::DISK);
+
+        if (! $disk->put($storedPath, $uploaded->getContent())) {
+            return response()->json([
+                'message' => 'No se pudo guardar el archivo subido.',
+            ], 500);
+        }
+
+        $import = InventoryImport::query()->create([
+            'original_filename' => $uploaded->getClientOriginalName(),
+            'stored_path' => $storedPath,
+            'disk' => self::DISK,
+            'import_mode' => InventoryImportMode::EXCLUSIVE_STORE,
+            'status' => InventoryImport::STATUS_PENDING,
+        ]);
+
+        ProcessExclusiveStoreImportJob::dispatch($import->id);
+
+        app(QueueWorkerStarter::class)->ensureRunning();
+
+        return response()->json([
+            'message' => 'Productos exclusivos encolados: catálogo completo, stock por sede, XML parcial y WordPress.',
             'import' => $this->importPayload($import),
         ], 202);
     }

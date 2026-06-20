@@ -144,4 +144,25 @@ class ProductXmlExportServiceTest extends TestCase
 
         $this->assertStringContainsString('<stock_general>0</stock_general>', $xml);
     }
+
+    public function test_partial_export_only_includes_requested_skus(): void
+    {
+        Product::query()->create(['sku' => 'A-1', 'name' => 'Producto A', 'principal_stock' => 1]);
+        Product::query()->create(['sku' => 'B-2', 'name' => 'Producto B', 'principal_stock' => 2]);
+        Product::query()->create(['sku' => 'C-3', 'name' => 'Producto C', 'principal_stock' => 3]);
+
+        $result = app(ProductXmlExportService::class)->generate('test', ['A-1', 'C-3']);
+
+        $this->assertSame('partial', $result['export_type']);
+        $this->assertSame('partial', $result['export_scope']);
+        $this->assertSame(2, $result['product_count']);
+
+        $xml = Storage::disk('local')->get($result['relative_path']);
+
+        $this->assertStringContainsString('export_scope="partial"', $xml);
+        $this->assertStringContainsString('<sku>A-1</sku>', $xml);
+        $this->assertStringContainsString('<sku>C-3</sku>', $xml);
+        $this->assertStringNotContainsString('<sku>B-2</sku>', $xml);
+        $this->assertStringContainsString('<product_count>2</product_count>', $xml);
+    }
 }

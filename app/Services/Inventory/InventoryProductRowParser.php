@@ -56,6 +56,40 @@ class InventoryProductRowParser
     }
 
     /**
+     * Incluye ficha de catálogo aunque la fila sea Lechería o Caracas (productos exclusivos por sede).
+     *
+     * @param  array<int, string|null>  $row
+     * @return array<string, mixed>|null
+     */
+    public function parseWithCatalog(array $row): ?array
+    {
+        $sku = trim($this->headers->value($row, 'sku') ?? '');
+
+        if ($sku === '') {
+            return null;
+        }
+
+        $cuentaMl = trim($this->headers->value($row, 'cuenta_ml') ?? '');
+
+        if ($cuentaMl === '') {
+            return null;
+        }
+
+        $location = $this->locationResolver->resolveFromCuentaMl($cuentaMl);
+        $isPrimaryCatalog = $location->slug === LocationResolver::PRIMARY_LOCATION_SLUG;
+
+        $base = [
+            'sku' => $sku,
+            'cuenta_ml' => $cuentaMl,
+            'location_slug' => $location->slug,
+            'is_primary_catalog' => $isPrimaryCatalog,
+            'stock' => $this->parseStock($row),
+        ];
+
+        return array_merge($base, $this->parseCatalogFields($row));
+    }
+
+    /**
      * @param  array<int, string|null>  $row
      */
     private function parseStock(array $row): int

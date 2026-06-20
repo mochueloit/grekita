@@ -115,6 +115,12 @@
                 >
                     Actualizar precios y stock
                 </a>
+                <a
+                    href="{{ route('inventory.import.exclusive.show') }}"
+                    class="inline-flex rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                >
+                    Exclusivos por sede
+                </a>
             </div>
         </div>
     @else

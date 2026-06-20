@@ -144,6 +144,11 @@ class InventoryImport extends Model
         return $this->importMode() === InventoryImportMode::STOCK_PRICE_XML;
     }
 
+    public function isExclusiveStoreMode(): bool
+    {
+        return $this->importMode() === InventoryImportMode::EXCLUSIVE_STORE;
+    }
+
     public function importMode(): string
     {
         return $this->import_mode ?? InventoryImportMode::FULL;
@@ -161,6 +166,22 @@ class InventoryImport extends Model
         }
 
         return (bool) (($this->checkpoint ?? [])['skip_image_wait'] ?? false);
+    }
+
+    /**
+     * SKUs tocados en la importación CSV (creados o actualizados).
+     *
+     * @return list<string>
+     */
+    public function syncedSkusForExport(): array
+    {
+        $synced = ($this->checkpoint ?? [])['synced_skus'] ?? [];
+
+        if ($synced === []) {
+            return [];
+        }
+
+        return array_values(array_keys($synced));
     }
 
     public function workerHint(): ?string

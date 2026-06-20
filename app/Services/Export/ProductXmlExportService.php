@@ -29,7 +29,7 @@ class ProductXmlExportService
      *     checksum_sha256: ?string
      * }
      */
-    public function generate(string $trigger = 'manual'): array
+    public function generate(string $trigger = 'manual', ?array $skus = null): array
     {
         return $this->runExport(
             trigger: $trigger,
@@ -37,6 +37,7 @@ class ProductXmlExportService
             latestRelativePath: (string) config('wp_export.latest_relative_path', 'exports/wp-xml/latest/products.xml'),
             catalogVersion: '2',
             fullCatalog: true,
+            skus: $skus,
         );
     }
 
@@ -45,7 +46,7 @@ class ProductXmlExportService
      *
      * @return array<string, mixed>
      */
-    public function generateStockPriceUpdate(string $trigger = 'manual'): array
+    public function generateStockPriceUpdate(string $trigger = 'manual', ?array $skus = null): array
     {
         return $this->runExport(
             trigger: $trigger,
@@ -53,6 +54,7 @@ class ProductXmlExportService
             latestRelativePath: (string) config('wp_export.stock_price_latest_relative_path', 'exports/wp-xml/latest/stock-price-update.xml'),
             catalogVersion: 'stock-price-1',
             fullCatalog: false,
+            skus: $skus,
         );
     }
 
@@ -78,10 +80,15 @@ class ProductXmlExportService
         string $latestRelativePath,
         string $catalogVersion,
         bool $fullCatalog,
+        ?array $skus = null,
     ): array {
         $disk = (string) config('wp_export.disk', 'local');
         $basePath = trim((string) config('wp_export.base_path', 'exports/wp-xml'), '/');
-        $exportType = $fullCatalog ? 'full' : 'stock_price';
+        $skus = $this->normalizeSkus($skus);
+        $isPartial = $skus !== [];
+        $exportType = $fullCatalog
+            ? ($isPartial ? 'partial' : 'full')
+            : ($isPartial ? 'stock_price_partial' : 'stock_price');
 
         $generatedAt = now();
         $folder = $generatedAt->format('Y-m-d').'/'.$generatedAt->format('H-i-s');
@@ -91,17 +98,33 @@ class ProductXmlExportService
 
         Storage::disk($disk)->makeDirectory($relativeDir);
 
-        $databaseProductCount = Product::query()->count();
-        $productCount = $fullCatalog
-            ? $this->writeFullXmlFile($disk, $relativePath, $generatedAt, $catalogVersion)
-            : $this->writeStockPriceXmlFile($disk, $relativePath, $generatedAt, $catalogVersion);
+        if ($isPartial) {
+            $databaseProductCount = Product::query()->whereIn('sku', $skus)->count();
+            $productCount = $fullCatalog
+                ? $this->writeFullXmlFile($disk, $relativePath, $generatedAt, $catalogVersion, $skus)
+                : $this->writeStockPriceXmlFile($disk, $relativePath, $generatedAt, $catalogVersion, $skus);
 
-        if ($productCount !== $databaseProductCount) {
-            throw new \RuntimeException(sprintf(
-                'El XML exportó %d productos pero en la base hay %d. Regenera el archivo; si persiste, revisa productos con datos corruptos.',
-                $productCount,
-                $databaseProductCount,
-            ));
+            if ($productCount !== $databaseProductCount) {
+                throw new \RuntimeException(sprintf(
+                    'El XML parcial exportó %d productos pero en la base hay %d de los %d SKU solicitados.',
+                    $productCount,
+                    $databaseProductCount,
+                    count($skus),
+                ));
+            }
+        } else {
+            $databaseProductCount = Product::query()->count();
+            $productCount = $fullCatalog
+                ? $this->writeFullXmlFile($disk, $relativePath, $generatedAt, $catalogVersion)
+                : $this->writeStockPriceXmlFile($disk, $relativePath, $generatedAt, $catalogVersion);
+
+            if ($productCount !== $databaseProductCount) {
+                throw new \RuntimeException(sprintf(
+                    'El XML exportó %d productos pero en la base hay %d. Regenera el archivo; si persiste, revisa productos con datos corruptos.',
+                    $productCount,
+                    $databaseProductCount,
+                ));
+            }
         }
 
         Storage::disk($disk)->makeDirectory(dirname($latestRelativePath));
@@ -114,6 +137,8 @@ class ProductXmlExportService
             'generated_at' => $generatedAt->toIso8601String(),
             'product_count' => $productCount,
             'database_product_count' => $databaseProductCount,
+            'export_scope' => $isPartial ? 'partial' : 'full',
+            'synced_sku_count' => $isPartial ? count($skus) : null,
             'relative_path' => $relativePath,
             'absolute_path' => $absolutePath,
             'latest_relative_path' => $latestRelativePath,
@@ -144,6 +169,7 @@ class ProductXmlExportService
             'trigger' => $trigger,
             'disk' => $disk,
             'export_type' => $exportType,
+            'export_scope' => $manifest['export_scope'],
             'checksum_sha256' => $checksum,
         ];
     }
@@ -184,8 +210,13 @@ class ProductXmlExportService
         ];
     }
 
-    private function writeFullXmlFile(string $disk, string $relativePath, \Illuminate\Support\Carbon $generatedAt, string $catalogVersion): int
-    {
+    private function writeFullXmlFile(
+        string $disk,
+        string $relativePath,
+        \Illuminate\Support\Carbon $generatedAt,
+        string $catalogVersion,
+        ?array $skus = null,
+    ): int {
         $absolutePath = Storage::disk($disk)->path($relativePath);
 
         $writer = new XMLWriter;
@@ -198,17 +229,23 @@ class ProductXmlExportService
         $writer->writeAttribute('generated_at', $generatedAt->toIso8601String());
         $writer->writeAttribute('generator', 'grekita-wp-export');
         $writer->writeAttribute('version', $catalogVersion);
+        if ($skus !== null && $skus !== []) {
+            $writer->writeAttribute('export_scope', 'partial');
+        }
 
         $writer->startElement('products');
 
         $count = 0;
 
-        foreach (
-            Product::query()
-                ->with(['locations', 'images', 'attributeDefinitions', 'categories'])
-                ->orderBy('sku')
-                ->cursor() as $product
-        ) {
+        $query = Product::query()
+            ->with(['locations', 'images', 'attributeDefinitions', 'categories'])
+            ->orderBy('sku');
+
+        if ($skus !== null && $skus !== []) {
+            $query->whereIn('sku', $skus);
+        }
+
+        foreach ($query->cursor() as $product) {
             $this->writeProductNode($writer, $product);
             $count++;
         }
@@ -223,8 +260,13 @@ class ProductXmlExportService
         return $count;
     }
 
-    private function writeStockPriceXmlFile(string $disk, string $relativePath, \Illuminate\Support\Carbon $generatedAt, string $catalogVersion): int
-    {
+    private function writeStockPriceXmlFile(
+        string $disk,
+        string $relativePath,
+        \Illuminate\Support\Carbon $generatedAt,
+        string $catalogVersion,
+        ?array $skus = null,
+    ): int {
         $absolutePath = Storage::disk($disk)->path($relativePath);
 
         $writer = new XMLWriter;
@@ -238,17 +280,23 @@ class ProductXmlExportService
         $writer->writeAttribute('generator', 'grekita-wp-export');
         $writer->writeAttribute('version', $catalogVersion);
         $writer->writeAttribute('export_type', 'stock_price');
+        if ($skus !== null && $skus !== []) {
+            $writer->writeAttribute('export_scope', 'partial');
+        }
 
         $writer->startElement('products');
 
         $count = 0;
 
-        foreach (
-            Product::query()
-                ->with(['locations'])
-                ->orderBy('sku')
-                ->cursor() as $product
-        ) {
+        $query = Product::query()
+            ->with(['locations'])
+            ->orderBy('sku');
+
+        if ($skus !== null && $skus !== []) {
+            $query->whereIn('sku', $skus);
+        }
+
+        foreach ($query->cursor() as $product) {
             $this->writeStockPriceProductNode($writer, $product);
             $count++;
         }
@@ -430,5 +478,28 @@ class ProductXmlExportService
         }
 
         $writer->endElement();
+    }
+
+    /**
+     * @param  list<string>|null  $skus
+     * @return list<string>
+     */
+    private function normalizeSkus(?array $skus): array
+    {
+        if ($skus === null || $skus === []) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($skus as $sku) {
+            $sku = trim((string) $sku);
+
+            if ($sku !== '') {
+                $normalized[$sku] = $sku;
+            }
+        }
+
+        return array_values($normalized);
     }
 }

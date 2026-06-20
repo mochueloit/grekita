@@ -20,6 +20,9 @@ class InventoryCsvImporter
     /** @var array<string, true> */
     private array $countedUpdatedSkus = [];
 
+    /** @var array<string, true> */
+    private array $syncedSkus = [];
+
     public function __construct(
         private readonly InventoryFileReader $fileReader,
         private readonly LocationResolver $locationResolver,
@@ -50,6 +53,7 @@ class InventoryCsvImporter
             'checkpoint' => [
                 'phase' => InventoryImportPhase::CATALOG,
                 'counted_updated_skus' => [],
+                'synced_skus' => [],
                 'catalog_rows' => $rowCounts['catalog'],
                 'stock_rows' => $rowCounts['stock'],
             ],
@@ -83,6 +87,7 @@ class InventoryCsvImporter
         $checkpoint = $import->checkpoint ?? [];
         $phase = $checkpoint['phase'] ?? InventoryImportPhase::CATALOG;
         $this->countedUpdatedSkus = $checkpoint['counted_updated_skus'] ?? [];
+        $this->syncedSkus = $checkpoint['synced_skus'] ?? [];
 
         $stats = array_merge($this->emptyStats(), $import->partial_stats ?? []);
         $chunk = [];
@@ -134,6 +139,7 @@ class InventoryCsvImporter
             'partial_stats' => $stats,
             'checkpoint' => array_merge($checkpoint, [
                 'counted_updated_skus' => $this->countedUpdatedSkus,
+                'synced_skus' => $this->syncedSkus,
             ]),
             'current_step' => $hasMore
                 ? InventoryImportPhase::label($phase).' — hasta fila '.$rowsScanned
@@ -540,6 +546,7 @@ class InventoryCsvImporter
 
             $location = $this->locationResolver->resolveFromCuentaMl($group['catalog']['cuenta_ml']);
             $this->stockService->setLocationStock($product, $location->id, (int) $group['catalog']['stock']);
+            $this->markSyncedSku($group['sku']);
 
             if ($progress !== null) {
                 $progress->sync([
@@ -623,6 +630,7 @@ class InventoryCsvImporter
 
             $location = $this->locationResolver->resolveFromCuentaMl($group['cuenta_ml']);
             $this->stockService->setLocationStock($product, $location->id, $group['stock']);
+            $this->markSyncedSku($group['sku']);
             $stockApplied++;
         }
 
@@ -631,6 +639,11 @@ class InventoryCsvImporter
             'stock_skipped' => $stockSkipped,
             'skipped' => $skippedCount,
         ];
+    }
+
+    private function markSyncedSku(string $sku): void
+    {
+        $this->syncedSkus[$sku] = true;
     }
 
     /**

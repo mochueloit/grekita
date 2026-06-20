@@ -5,14 +5,10 @@
 
 @section('content')
     <div class="mx-auto max-w-3xl">
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
-            <p class="text-sm text-slate-600">Solo productos que ya existen en catálogo</p>
-            <a
-                href="{{ route('inventory.import.show') }}"
-                class="text-sm font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-900"
-            >
-                Importar productos nuevos
-            </a>
+        <div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-200 pb-4 text-sm">
+            <a href="{{ route('inventory.import.show') }}" class="font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900">Importar productos nuevos</a>
+            <span class="text-slate-300">·</span>
+            <a href="{{ route('inventory.import.exclusive.show') }}" class="font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-slate-900">Exclusivos por sede</a>
         </div>
 
         <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
