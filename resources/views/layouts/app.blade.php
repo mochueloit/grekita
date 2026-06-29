@@ -54,6 +54,16 @@
                 >
                     Exclusivos sede
                 </a>
+                <a
+                    href="{{ route('variations.import.show') }}"
+                    @class([
+                        'rounded-lg px-3 py-2 text-sm font-medium transition',
+                        'bg-slate-900 text-white' => request()->routeIs('variations.*'),
+                        'text-slate-600 hover:bg-slate-100' => ! request()->routeIs('variations.*'),
+                    ])
+                >
+                    Variaciones
+                </a>
                 @auth
                     <span class="hidden text-xs text-slate-500 sm:inline">{{ auth()->user()->email }}</span>
                     <form method="POST" action="{{ route('logout') }}" class="inline">

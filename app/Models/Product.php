@@ -75,6 +75,11 @@ class Product extends Model
         return $this->hasMany(ProductImage::class)->orderBy('sort_order');
     }
 
+    public function variations(): HasMany
+    {
+        return $this->hasMany(ProductVariation::class, 'sku_padre', 'sku')->orderBy('sku');
+    }
+
     public function primaryImage(): ?ProductImage
     {
         return $this->images->firstWhere('is_primary', true) ?? $this->images->first();

@@ -10,12 +10,15 @@ class InventoryImportMode
 
     public const EXCLUSIVE_STORE = 'exclusive_store';
 
+    public const VARIATIONS = 'variations';
+
     public static function label(string $mode): string
     {
         return match ($mode) {
             self::STOCK_PRICE_XML => 'Actualizar precios y stock',
             self::EXCLUSIVE_STORE => 'Productos exclusivos por sede',
-            default => 'Importar productos nuevos',
+            self::VARIATIONS      => 'Importar variaciones',
+            default               => 'Importar productos nuevos',
         };
     }
 }

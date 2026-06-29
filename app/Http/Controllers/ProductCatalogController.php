@@ -96,11 +96,29 @@ class ProductCatalogController extends Controller
 
     public function show(Product $product): View
     {
-        $product->load(['locations', 'images', 'attributeDefinitions', 'categories']);
+        $product->load(['locations', 'images', 'attributeDefinitions', 'categories', 'variations']);
 
         return view('products.show', [
             'product' => $product,
             'primaryLocationSlug' => LocationResolver::PRIMARY_LOCATION_SLUG,
         ]);
+    }
+
+    public function updatePrice(Request $request, Product $product): \Illuminate\Http\RedirectResponse
+    {
+        $data = $request->validate([
+            'price'          => ['nullable', 'numeric', 'min:0'],
+            'price_foreign'  => ['nullable', 'numeric', 'min:0'],
+            'price_currency' => ['nullable', 'string', 'max:10'],
+        ]);
+
+        $product->update([
+            'price'          => $data['price']          !== null ? (string) $data['price'] : null,
+            'price_foreign'  => $data['price_foreign']  !== null ? (string) $data['price_foreign'] : null,
+            'price_currency' => filled($data['price_currency']) ? strtoupper(trim($data['price_currency'])) : null,
+        ]);
+
+        return redirect()->route('products.show', $product)
+            ->with('success', 'Precio actualizado correctamente.');
     }
 }

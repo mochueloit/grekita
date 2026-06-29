@@ -12,6 +12,7 @@ use App\Services\Inventory\InventorySkippedRowExporter;
 use App\Services\Inventory\InventorySkippedRowLogger;
 use App\Services\WordPress\WpAllImportSyncLogger;
 use App\Services\Inventory\QueueWorkerStarter;
+use App\Services\ImportHeaderValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -84,6 +85,11 @@ class InventoryImportController extends Controller
             ], 422);
         }
 
+        $headerError = app(ImportHeaderValidator::class)->validate($uploaded, 'full');
+        if ($headerError) {
+            return response()->json(['message' => $headerError], 422);
+        }
+
         $storedPath = 'imports/'.uniqid('import_', true).'.'.$extension;
         $disk = Storage::disk(self::DISK);
 
@@ -132,6 +138,11 @@ class InventoryImportController extends Controller
             ], 422);
         }
 
+        $headerError = app(ImportHeaderValidator::class)->validate($uploaded, 'stock_price');
+        if ($headerError) {
+            return response()->json(['message' => $headerError], 422);
+        }
+
         $storedPath = 'imports/'.uniqid('stock_price_', true).'.'.$extension;
         $disk = Storage::disk(self::DISK);
 
@@ -178,6 +189,11 @@ class InventoryImportController extends Controller
             return response()->json([
                 'message' => 'Formato no soportado. Use CSV, XLS o XLSX.',
             ], 422);
+        }
+
+        $headerError = app(ImportHeaderValidator::class)->validate($uploaded, 'exclusive');
+        if ($headerError) {
+            return response()->json(['message' => $headerError], 422);
         }
 
         $storedPath = 'imports/'.uniqid('exclusive_', true).'.'.$extension;
