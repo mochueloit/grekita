@@ -132,6 +132,16 @@
                     <span id="sync-badge" class="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700"></span>
                 </div>
 
+                <div class="mt-4">
+                    <div class="mb-1 flex items-center justify-between text-xs text-slate-600">
+                        <span id="sync-count">0 / 0 productos</span>
+                        <span id="sync-percent">0%</span>
+                    </div>
+                    <div class="h-2 overflow-hidden rounded-full border border-slate-200 bg-white">
+                        <div id="sync-bar" class="h-full rounded-full bg-emerald-600 transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                </div>
+
                 <div id="sync-log-panel" class="collapsible-panel mt-4 rounded-lg border border-slate-200 bg-white" data-default-expanded="true">
                     <button type="button" class="collapsible-panel-toggle flex w-full items-center justify-between gap-3 px-4 py-3 text-left" aria-expanded="true">
                         <span class="text-xs font-semibold uppercase tracking-wide text-slate-500">Log sync WooCommerce</span>
@@ -146,6 +156,12 @@
                         </div>
                         <div id="sync-log" class="collapsible-panel-scroll max-h-60 overflow-y-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-300"></div>
                     </div>
+                </div>
+
+                <div id="sync-log-download-panel" class="mt-4 hidden">
+                    <a id="sync-log-download-link" href="#" class="inline-flex rounded border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                        Descargar log sync completo (.log)
+                    </a>
                 </div>
             </div>
         </div>
@@ -400,7 +416,7 @@
 
         function startPolling(id) {
             clearInterval(pollTimer);
-            lastLogLength = 0;
+            lastLogLength = '';
             poll(id);
             pollTimer = setInterval(() => poll(id), 2000);
         }
@@ -429,12 +445,17 @@
 
     // ---- Sync WooCommerce ----
     (function () {
-        const syncBtn      = document.getElementById('sync-btn');
-        const syncAlert    = document.getElementById('sync-alert');
-        const syncProgress = document.getElementById('sync-progress');
-        const syncStatus   = document.getElementById('sync-status');
-        const syncBadge    = document.getElementById('sync-badge');
-        const syncLog      = document.getElementById('sync-log');
+        const syncBtn             = document.getElementById('sync-btn');
+        const syncAlert           = document.getElementById('sync-alert');
+        const syncProgress        = document.getElementById('sync-progress');
+        const syncStatus          = document.getElementById('sync-status');
+        const syncBadge           = document.getElementById('sync-badge');
+        const syncLog             = document.getElementById('sync-log');
+        const syncBar             = document.getElementById('sync-bar');
+        const syncCount           = document.getElementById('sync-count');
+        const syncPercent         = document.getElementById('sync-percent');
+        const syncLogDownloadPanel= document.getElementById('sync-log-download-panel');
+        const syncLogDownloadLink = document.getElementById('sync-log-download-link');
 
         const statusUrlTemplate = @json(route('variations.import.status', ['import' => '__ID__']));
         const syncUrl           = @json(route('variations.sync'));
@@ -496,8 +517,22 @@
                 syncBadge.textContent  = imp.status_label;
                 renderSyncLog(imp.log_entries);
 
+                const total   = imp.total_rows ?? 0;
+                const done    = imp.processed_rows ?? 0;
+                const pct     = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+                syncCount.textContent   = total > 0 ? `${done} / ${total} productos` : `${done} procesados`;
+                syncPercent.textContent = `${pct}%`;
+                syncBar.style.width     = `${pct}%`;
+
+                if (imp.log_download_url) {
+                    syncLogDownloadLink.href = imp.log_download_url;
+                    syncLogDownloadPanel.classList.remove('hidden');
+                }
+
                 if (imp.is_finished || imp.status === 'failed') {
                     clearInterval(syncPollTimer);
+                    syncBar.style.width     = imp.is_finished ? '100%' : syncBar.style.width;
+                    syncPercent.textContent = imp.is_finished ? '100%' : syncPercent.textContent;
                     syncBtn.disabled    = false;
                     syncBtn.textContent = 'Sincronizar con WooCommerce';
                     showSyncAlert(
@@ -536,10 +571,14 @@
                 }
 
                 syncProgress.classList.remove('hidden');
-                syncLastLogLen = '';
-                syncStatus.textContent = payload.import.status_label;
-                syncBadge.textContent  = payload.import.status_label;
-                syncBtn.textContent    = 'Sincronizando...';
+                syncLastLogLen          = '';
+                syncBar.style.width     = '0%';
+                syncCount.textContent   = '0 / 0 productos';
+                syncPercent.textContent = '0%';
+                syncLogDownloadPanel.classList.add('hidden');
+                syncStatus.textContent  = payload.import.status_label;
+                syncBadge.textContent   = payload.import.status_label;
+                syncBtn.textContent     = 'Sincronizando...';
 
                 showSyncAlert(payload.message, 'success');
 
