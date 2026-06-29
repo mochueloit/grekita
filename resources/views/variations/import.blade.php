@@ -227,7 +227,7 @@
         const statusUrlTemplate = @json(route('variations.import.status', ['import' => '__ID__']));
 
         let pollTimer     = null;
-        let lastLogLength = 0;
+        let lastLogLength = '';
         let logCache      = [];
 
         // ---- Collapsible panels ----
@@ -264,11 +264,12 @@
         // ---- Log rendering ----
         function renderLog(entries) {
             logCache = entries || [];
-            if (logCache.length === lastLogLength) return;
-            lastLogLength = logCache.length;
+            if (logCache.length === 0) return;
+            const lastKey = logCache.length + '|' + (logCache[logCache.length - 1]?.at ?? '') + '|' + (logCache[logCache.length - 1]?.message ?? '');
+            if (lastKey === lastLogLength) return;
+            lastLogLength = lastKey;
 
-            const display = logCache.slice(-80);
-            progressLog.innerHTML = display.map(e =>
+            progressLog.innerHTML = logCache.map(e =>
                 `<div><span class="text-slate-500">[${e.at}]</span> ${e.message}</div>`
             ).join('');
             progressLog.scrollTop = progressLog.scrollHeight;
@@ -369,7 +370,7 @@
                 }
 
                 form.reset();
-                lastLogLength = 0;
+                lastLogLength = '';
                 renderImport(payload.import);
                 startPolling(payload.import.id);
                 showAlert(payload.message || 'Archivo encolado.', 'success');
@@ -439,7 +440,7 @@
         const syncUrl           = @json(route('variations.sync'));
 
         let syncPollTimer    = null;
-        let syncLastLogLen   = 0;
+        let syncLastLogLen   = '';
 
         // Reusar la lógica de collapsible para el panel de sync
         document.querySelectorAll('#sync-log-panel').forEach((panel) => {
@@ -472,10 +473,11 @@
         });
 
         function renderSyncLog(entries) {
-            if (!entries || entries.length === syncLastLogLen) return;
-            syncLastLogLen = entries.length;
-            const display = entries.slice(-150);
-            syncLog.innerHTML = display.map(e =>
+            if (!entries || entries.length === 0) return;
+            const lastKey = entries.length + '|' + (entries[entries.length - 1]?.at ?? '') + '|' + (entries[entries.length - 1]?.message ?? '');
+            if (lastKey === syncLastLogLen) return;
+            syncLastLogLen = lastKey;
+            syncLog.innerHTML = entries.map(e =>
                 `<div><span class="text-slate-500">[${e.at}]</span> ${e.message}</div>`
             ).join('');
             syncLog.scrollTop = syncLog.scrollHeight;
@@ -534,7 +536,7 @@
                 }
 
                 syncProgress.classList.remove('hidden');
-                syncLastLogLen = 0;
+                syncLastLogLen = '';
                 syncStatus.textContent = payload.import.status_label;
                 syncBadge.textContent  = payload.import.status_label;
                 syncBtn.textContent    = 'Sincronizando...';

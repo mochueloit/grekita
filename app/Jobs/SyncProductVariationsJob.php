@@ -204,6 +204,11 @@ class SyncProductVariationsJob implements ShouldQueue
 
         $progress->log("    Resumen {$this->skuPadre}: {$okCount} OK | {$failCount} fallidas");
 
+        // Incremento atómico — varios jobs corren en paralelo, sin race condition
+        \Illuminate\Support\Facades\DB::table('inventory_imports')
+            ->where('id', $this->logImportId)
+            ->increment('processed_rows');
+
         $this->checkAndCloseImport($progress);
     }
 
